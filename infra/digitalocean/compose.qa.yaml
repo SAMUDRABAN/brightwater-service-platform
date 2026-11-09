@@ -1,0 +1,27 @@
+# Apply after infra/digitalocean/compose.yaml on a SEPARATE QA host/project.
+# Only the TLS proxy has Internet egress. No provider credentials are supplied.
+services:
+  api:
+    networks: !override [app, data]
+    environment: &qa
+      BW_ENVIRONMENT: shadow
+      BW_DIALING_ENABLED: 'false'
+      BW_ENGINEERING_ENABLED: 'false'
+      BW_ENGINEERING_RECIPIENT: ''
+      BW_VOICE_GATEWAY_TOKEN: ''
+      BW_VOICE_GATEWAY_URL: ''
+      BW_OPENAI_API_KEY: ''
+      BW_ELEVENLABS_API_KEY: ''
+      BW_LIVEKIT_URL: ''
+      BW_LIVEKIT_API_KEY: ''
+      BW_LIVEKIT_API_SECRET: ''
+      BW_LIVEKIT_OUTBOUND_TRUNK_ID: ''
+  worker:
+    environment: *qa
+    networks: !override [data]
+  beat:
+    environment: *qa
+    networks: !override [data]
+  voice:
+    environment: *qa
+    networks: !override [data]

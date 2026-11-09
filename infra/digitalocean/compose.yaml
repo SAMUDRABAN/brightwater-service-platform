@@ -1,0 +1,54 @@
+# Overlay on the repository compose.yaml. Requires Docker Compose >= 2.24.4.
+# Only Caddy publishes ports. All credentials come from a private --env-file.
+services:
+  db:
+    networks: !override [data]
+    ports: !override []
+  redis:
+    networks: !override [data]
+    ports: !override []
+  migrate:
+    networks: !override [data]
+  api:
+    networks: !override [app, data, egress]
+    ports: !override []
+    stop_grace_period: 30s
+  web:
+    networks: !override [app]
+    ports: !override []
+    stop_grace_period: 30s
+  worker:
+    networks: !override [data, egress]
+    stop_grace_period: 60s
+  beat:
+    networks: !override [data]
+    stop_grace_period: 15s
+  voice:
+    networks: !override [egress]
+    stop_grace_period: 30m
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    environment:
+      BW_WEB_HOST: ${BW_WEB_HOST:?Set BW_WEB_HOST}
+      BW_API_HOST: ${BW_API_HOST:?Set BW_API_HOST}
+      BW_TLS_EMAIL: ${BW_TLS_EMAIL:?Set BW_TLS_EMAIL}
+    volumes:
+      - ./infra/digitalocean/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [app, egress]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      api: {condition: service_healthy}
+      web: {condition: service_started}
+networks:
+  data:
+    internal: true
+  app:
+    internal: true
+  egress: {}
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,13 @@
+{
+  "observed_utc": "2026-11-05T18:43:53Z",
+  "source": "GET https://api.digitalocean.com/v2/sizes?per_page=200",
+  "region": "lon1",
+  "currency": "USD",
+  "sizes": [
+    {"slug": "s-2vcpu-2gb", "vcpus": 2, "memory_mib": 2048, "disk_gb": 60, "price_monthly": 18, "price_hourly": 0.02679, "available_in_lon1": true},
+    {"slug": "s-2vcpu-4gb", "vcpus": 2, "memory_mib": 4096, "disk_gb": 80, "price_monthly": 24, "price_hourly": 0.03571, "available_in_lon1": true},
+    {"slug": "s-4vcpu-8gb", "vcpus": 4, "memory_mib": 8192, "disk_gb": 160, "price_monthly": 48, "price_hourly": 0.07143, "available_in_lon1": true}
+  ],
+  "proposed_two_4gb_hosts": {"incremental_monthly_compute": 48, "incremental_hourly_compute": 0.07142},
+  "excluded": ["existing unrelated Droplet", "tax", "backups", "snapshots", "off-host backup storage", "managed database", "load balancer", "voice/media/inference/carrier usage", "excess transfer", "domain registration"]
+}

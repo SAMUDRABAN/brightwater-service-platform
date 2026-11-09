@@ -1,0 +1,27 @@
+# Use a separate --project-name and --env-file. Never use production credentials.
+services:
+  api:
+    environment: &shadow
+      BW_ENVIRONMENT: shadow
+      BW_DIALING_ENABLED: 'false'
+      BW_API_URL: https://shadow.invalid
+      BW_OPENAI_API_KEY: ''
+      BW_ELEVENLABS_API_KEY: ''
+      BW_LIVEKIT_URL: ''
+      BW_LIVEKIT_API_KEY: ''
+      BW_LIVEKIT_API_SECRET: ''
+      BW_LIVEKIT_OUTBOUND_TRUNK_ID: ''
+  worker:
+    environment: *shadow
+  beat:
+    environment: *shadow
+  voice:
+    environment: *shadow
+  web:
+    # This override is loopback-only offline QA. Deployed QA uses the TLS
+    # infrastructure override and its protected public-host configuration.
+    environment:
+      BW_ENVIRONMENT: local
+networks:
+  default:
+    internal: true

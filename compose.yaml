@@ -1,0 +1,124 @@
+name: ${BW_STACK_NAME:-brightwater-local}
+x-backend: &backend
+  build: ./backend
+  restart: unless-stopped
+  environment: &backend_env
+    BW_ENVIRONMENT: ${BW_ENVIRONMENT:-local}
+    BW_DATABASE_URL: ${BW_DATABASE_URL:?Set BW_DATABASE_URL}
+    BW_REDIS_URL: ${BW_REDIS_URL:?Set BW_REDIS_URL}
+    BW_OPERATOR_TOKEN: ${BW_OPERATOR_TOKEN:?Set BW_OPERATOR_TOKEN}
+    BW_RUNTIME_TOKEN: ${BW_RUNTIME_TOKEN:?Set BW_RUNTIME_TOKEN}
+    BW_DIALING_ENABLED: ${BW_DIALING_ENABLED:-false}
+    BW_VOICE_GATEWAY_URL: ${BW_VOICE_GATEWAY_URL:-}
+    BW_VOICE_GATEWAY_TOKEN: ${BW_VOICE_GATEWAY_TOKEN:-}
+    BW_ENGINEERING_ENABLED: ${BW_ENGINEERING_ENABLED:-false}
+    BW_ENGINEERING_RECIPIENT: ${BW_ENGINEERING_RECIPIENT:-}
+    BW_ENGINEERING_CONSENT_REFERENCE: ${BW_ENGINEERING_CONSENT_REFERENCE:-}
+    BW_ENGINEERING_DISPLAY_NAME: ${BW_ENGINEERING_DISPLAY_NAME:-Samudra}
+    BW_ENGINEERING_CALL_LIMIT: ${BW_ENGINEERING_CALL_LIMIT:-3}
+    BW_API_URL: ${BW_API_URL:-http://api:8787}
+    BW_RELEASE_ID: ${BW_RELEASE_ID:-development}
+    BW_LIVEKIT_URL: ${BW_LIVEKIT_URL:-}
+    BW_LIVEKIT_API_KEY: ${BW_LIVEKIT_API_KEY:-}
+    BW_LIVEKIT_API_SECRET: ${BW_LIVEKIT_API_SECRET:-}
+    BW_LIVEKIT_OUTBOUND_TRUNK_ID: ${BW_LIVEKIT_OUTBOUND_TRUNK_ID:-}
+    BW_VOICE_AGENT_NAME: ${BW_VOICE_AGENT_NAME:-brightwater}
+    BW_VOICE_PIPELINE: ${BW_VOICE_PIPELINE:-direct}
+    BW_VOICE_DIRECT_MODE: ${BW_VOICE_DIRECT_MODE:-realtime_text}
+    BW_OPENAI_API_KEY: ${BW_OPENAI_API_KEY:-}
+    BW_ELEVENLABS_API_KEY: ${BW_ELEVENLABS_API_KEY:-}
+    BW_MEDIA_ENCRYPTION_KEY: ${BW_MEDIA_ENCRYPTION_KEY:-}
+    BW_MEDIA_ROOT: /var/lib/brightwater/media
+    BW_VOICE_STT_MODEL: ${BW_VOICE_STT_MODEL:-}
+    BW_VOICE_LLM_MODEL: ${BW_VOICE_LLM_MODEL:-}
+    BW_VOICE_TTS_MODEL: ${BW_VOICE_TTS_MODEL:-}
+    BW_VOICE_ID: ${BW_VOICE_ID:-}
+    BW_RECORDING_NOTICE: ${BW_RECORDING_NOTICE:-}
+    BW_OFFICE_CALLBACK_NUMBER: ${BW_OFFICE_CALLBACK_NUMBER:-}
+  depends_on:
+    db: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  security_opt: [no-new-privileges:true]
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  redis:
+    image: redis:7.4
+    restart: unless-stopped
+    environment: {REDIS_PASSWORD: '${REDIS_PASSWORD:?Set REDIS_PASSWORD}'}
+    command: [sh, -c, 'exec redis-server --appendonly yes --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"']
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  migrate:
+    <<: *backend
+    restart: 'no'
+    command: [alembic, upgrade, head]
+  api:
+    <<: *backend
+    environment:
+      <<: *backend_env
+      BW_MANAGED_ENABLED: ${BW_MANAGED_ENABLED:-false}
+      BW_MANAGED_EVALUATION_REQUEST_LIMIT: ${BW_MANAGED_EVALUATION_REQUEST_LIMIT:-10}
+      BW_MANAGED_PHONE_ENABLED: ${BW_MANAGED_PHONE_ENABLED:-false}
+      BW_MANAGED_PHONE_AGENT_ID: ${BW_MANAGED_PHONE_AGENT_ID:-}
+      BW_MANAGED_AGENT_ID: ${BW_MANAGED_AGENT_ID:-}
+      BW_MANAGED_API_KEY: ${BW_MANAGED_API_KEY:-}
+      BW_MANAGED_WEBHOOK_SECRET: ${BW_MANAGED_WEBHOOK_SECRET:-}
+      BW_MANAGED_DATABASE_URL: ${BW_MANAGED_DATABASE_URL:-}
+    volumes: [recording_data:/var/lib/brightwater/media]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    ports: ['127.0.0.1:${BW_API_PORT:-8787}:8787']
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8787/health/ready")']
+      interval: 10s
+      timeout: 3s
+      retries: 6
+  worker:
+    <<: *backend
+    command: [celery, -A, 'brightwater.worker:celery', worker, --loglevel=INFO, '--queues=calls.dispatch,calls.reconcile,maintenance', --concurrency=2]
+    depends_on:
+      api: {condition: service_healthy}
+  beat:
+    <<: *backend
+    command: [python, -m, brightwater.worker]
+    depends_on:
+      api: {condition: service_healthy}
+  voice:
+    <<: *backend
+    profiles: [voice]
+    command: [python, -m, brightwater.voice_agent, start]
+    depends_on:
+      api: {condition: service_healthy}
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      BW_API_URL: http://api:8787
+      BW_PUBLIC_API_URL: ${BW_PUBLIC_API_URL:-http://127.0.0.1:8787}
+      BW_ENVIRONMENT: ${BW_ENVIRONMENT:-local}
+      BW_WEB_HOST: ${BW_WEB_HOST:-}
+    ports: ['127.0.0.1:${BW_WEB_PORT:-3000}:3000']
+    depends_on:
+      api: {condition: service_healthy}
+volumes:
+  postgres_data:
+  redis_data:
+  recording_data:

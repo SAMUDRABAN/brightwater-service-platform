@@ -1,0 +1,63 @@
+services:
+  redis:
+    image: redis:7.4
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Private Redis password required}
+    command: [sh, -c, 'exec redis-server --appendonly yes --appendfsync always --maxmemory 96mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"']
+    volumes: [redis_data:/data]
+    networks: [private]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    mem_limit: 160m
+    security_opt: [no-new-privileges:true]
+  gateway:
+    build:
+      context: ../../backend
+    command: [uvicorn, brightwater.plivo_gateway:app_factory, --factory, --host, 0.0.0.0, --port, '8788', --workers, '1', --no-access-log, --log-level, warning, --ws-max-size, '65536']
+    env_file: ${BW_GATEWAY_ENV_FILE:?Private voice configuration required}
+    environment:
+      HF_HOME: /home/app/.cache/huggingface
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    restart: unless-stopped
+    volumes: [model_cache:/home/app/.cache]
+    networks: [private, egress]
+    mem_limit: 1536m
+    stop_grace_period: 4m
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8788/health/ready", timeout=3)']
+      interval: 15s
+      timeout: 5s
+      start_period: 180s
+      retries: 8
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      BW_GATEWAY_HOST: ${BW_GATEWAY_HOST:?Public voice hostname required}
+      BW_TLS_EMAIL: ${BW_TLS_EMAIL:?Certificate contact required}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [private, egress]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      gateway: {condition: service_started}
+networks:
+  private: {internal: true}
+  egress: {}
+volumes:
+  redis_data:
+  model_cache:
+  caddy_data:
+  caddy_config:

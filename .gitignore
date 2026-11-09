@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+*.tsbuildinfo
+.pytest_cache/
+.ruff_cache/
+.next/
+node_modules/
+dist/
+*.tfstate*
+.terraform/
+*.log
+playwright-report/
+test-results/
+
+# Generated Next.js environment declarations
+web/next-env.d.ts
