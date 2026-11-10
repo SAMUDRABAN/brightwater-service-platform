@@ -57,6 +57,9 @@ export function FollowupList({ items, compact = false }: { items: Followup[]; co
                   >
                     {followupName(f.kind)}
                   </Status>
+                  {f.purpose === "browser_simulation" && (
+                    <span className="test-label">Browser test</span>
+                  )}
                   {f.purpose === "engineering" && (
                     <span className="test-label">Engineering test</span>
                   )}
@@ -177,6 +180,9 @@ export function BookingTable({
                   <td>
                     <strong>{a.customer_name || a.address}</strong>
                     <small>{a.address}</small>
+                    {a.purpose === "browser_simulation" && (
+                      <span className="test-label">Browser test</span>
+                    )}
                     {a.purpose === "engineering" && (
                       <span className="test-label">Engineering test</span>
                     )}
@@ -251,6 +257,9 @@ export function CallTable({ items }: { items: CallRecord[] }) {
                 <small>
                   {c.customer_id} · Attempt {c.attempt}
                 </small>
+                {c.purpose === "browser_simulation" && (
+                  <span className="test-label">Browser test</span>
+                )}
                 {c.purpose === "engineering" && (
                   <span className="test-label">Engineering test</span>
                 )}

@@ -223,3 +223,52 @@ def test_completed_booking_cannot_turn_into_a_reported_failure_on_tool_retry():
         assert result["confirmed"] is True and result["outcome"] == "Booked"
         assert result["finished"] is True and "error" not in result
         assert db.scalar(select(func.count()).select_from(m.Booking)) == 1
+
+
+def test_browser_voice_booking_uses_office_capacity_and_records_outcome():
+    from brightwater import services as svc
+    from brightwater.managed.engine import create_diary_simulation
+    from brightwater.managed.understanding import SpokenFacts, SpokenItem
+
+    with session() as db, db.begin():
+        value = create_diary_simulation(db, "BW-1041")
+        call = db.get(m.Call, value["id"])
+        customer = db.get(m.Customer, call.customer_id)
+        destination = db.get(m.Destination, call.destination_id)
+        assert customer.contact_blocked and not destination.enabled
+        assert not db.scalar(select(m.Outbox.id))
+        conv = Conversation(call.id, text_only=False)
+        conv.agent(f"Am I speaking with {customer.name}?")
+        conv.user("Yes, you are.")
+        bind(db, conv, identity="assent", identity_question=True)
+        account = conv.execute(db, "confirm_identity", {}, "identity")
+        assert account["verified"]
+        conv.understanding = None
+        prop = db.scalar(select(m.Property).where(m.Property.customer_id == customer.id))
+        options = conv.execute(db, "check_availability",
+            {"items": [{"property_id": prop.id, "service": "service"}]}, "availability")
+        prepared = conv.execute(db, "prepare_booking",
+            {"offer_id": options["options"][0]["offer_id"], "tenants": []}, "prepare")
+        proposal = db.get(m.Proposal, prepared["proposal_id"])
+        item = proposal.items[0]
+        window = db.get(m.DiaryWindow, item["window_id"])
+        occupied = window.used_minutes
+        period = (8, 12) if item["period"] == "MORNING" else (12, 17)
+        details = f"Boiler service at {prop.address} on {item['day']}, between {period[0]} and {period[1]}."
+        question = "Would you like me to reserve that visit?"
+        conv.agent(f"{details} You would pay the engineer £95, including VAT. {question}")
+        conv.user("Go ahead")
+        facts = SpokenFacts(unambiguous=True, items=[SpokenItem(address="18 Albert Road, Southsea",
+            postcode="PO4 0JT", service="service", day=item["day"], period=item["period"],
+            window_start=period[0], window_end=period[1], quote=details)], total_pence=9500,
+            vat_included=True, payment_to_engineer=True, asks_confirmation=True, price_quote="£95",
+            vat_quote="including VAT", payment_quote="pay the engineer", question_quote=question)
+        bind(db, conv, appointment="confirm", readback=facts)
+        conv.intent = conv.understanding.appointment_evidence()
+        result = conv.execute(db, "confirm_booking", {"proposal_id": proposal.id}, "confirm")
+        assert result["confirmed"]
+        assert window.used_minutes == occupied + 60
+        assert db.get(m.Booking, result["booking_id"]).customer_id == customer.id
+        svc.finalise(db, call, "Browser roleplay complete.")
+        assert call.outcome == "Booked"
+        assert not db.scalar(select(m.Outbox.id))

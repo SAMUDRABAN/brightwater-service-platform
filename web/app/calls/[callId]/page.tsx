@@ -112,7 +112,9 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
             </dd>
           </div>
           <div>
-            <dt>Connected duration</dt>
+            <dt>
+              {call.purpose === "browser_simulation" ? "Session duration" : "Connected duration"}
+            </dt>
             <dd>{duration(call.duration_seconds)}</dd>
           </div>
           <div>
@@ -121,7 +123,13 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
           </div>
           <div>
             <dt>Type</dt>
-            <dd>{call.purpose === "engineering" ? "Attended test" : "Customer campaign"}</dd>
+            <dd>
+              {call.purpose === "browser_simulation"
+                ? "Browser test"
+                : call.purpose === "engineering"
+                  ? "Attended test"
+                  : "Customer campaign"}
+            </dd>
           </div>
         </dl>
         <div className="call-player">
@@ -249,7 +257,7 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
           </ol>
         ) : (
           <Empty title="No conversation captured" icon="headphones">
-            An attempt that never connects has no transcript. Its call record is still retained.
+            No transcript was captured for this attempt. Its record is still retained.
           </Empty>
         )}
         <div className="panel-footnote">

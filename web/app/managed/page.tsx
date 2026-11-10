@@ -10,8 +10,13 @@ export default async function ManagedPage() {
   if (user.role !== "admin") redirect("/morning");
   const customers = await api<Customer[]>("/v1/customers");
   let enabled = false;
-  let evaluations: { id: string; customer_id: string; state: string; outcome: string | null }[] =
-    [];
+  let evaluations: {
+    id: string;
+    customer_id: string;
+    state: string;
+    outcome: string | null;
+    purpose: string;
+  }[] = [];
   try {
     enabled = (await api<{ enabled: boolean }>("/v1/managed/status")).enabled;
     if (enabled) evaluations = await api<typeof evaluations>("/v1/managed/evaluations");
@@ -27,7 +32,8 @@ export default async function ManagedPage() {
         <div>
           <h1>Conversation lab</h1>
           <p className="intro">
-            Valory with ElevenLabs Agents. Fictional customers, a separate diary, no telephone call.
+            Speak with Valory through ElevenLabs using a fictional customer. No telephone call is
+            placed.
           </p>
         </div>
         <span className="badge">Engineering evaluation</span>
@@ -35,9 +41,8 @@ export default async function ManagedPage() {
       <section className="panel controls">
         <h2>Listen and check the outcome.</h2>
         <p>
-          Voice mode lets you evaluate the conversation and interruptions through your microphone.
-          Text mode can confirm real reservations in the isolated evaluation diary. Voice booking
-          confirmation is still being qualified and remains blocked.
+          Voice sessions can save confirmed test bookings in the office diary and appear in Calls as
+          browser tests. These bookings use diary capacity. Text sessions use the evaluation diary.
         </p>
         <p>
           Sessions are recorded by ElevenLabs, retained for seven days, and stop within three
@@ -51,7 +56,7 @@ export default async function ManagedPage() {
       <section className="panel">
         <div className="panel-heading">
           <h2>Evaluation outcomes</h2>
-          <span>Separate from the office diary</span>
+          <span>Voice and text evaluations</span>
         </div>
         <div className="table-wrap">
           <table>
@@ -67,7 +72,13 @@ export default async function ManagedPage() {
                 <tr key={e.id}>
                   <td>
                     {e.customer_id}
-                    <small>{e.id}</small>
+                    <small>
+                      {e.purpose === "browser_simulation" ? (
+                        <Link href={`/calls/${e.id}`}>View browser test in Calls</Link>
+                      ) : (
+                        e.id
+                      )}
+                    </small>
                   </td>
                   <td>{e.state}</td>
                   <td>{e.outcome || "No saved business outcome"}</td>

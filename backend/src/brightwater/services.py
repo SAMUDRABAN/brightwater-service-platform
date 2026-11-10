@@ -522,7 +522,7 @@ def finalise(db, call, summary):
         for e in events
     )
     fallback = None
-    if "recording_refused" not in kinds and call.purpose != "managed_evaluation" and (not answered or technical_failure):
+    if "recording_refused" not in kinds and call.purpose not in {"managed_evaluation", "browser_simulation"} and (not answered or technical_failure):
         fallback = "No answer"  # The assessment groups failed calls with No answer.
 
     call.outcome = next((o for o in OUTCOMES if o in facts), fallback)
@@ -537,6 +537,8 @@ def finalise(db, call, summary):
     call.state, call.ended_at, call.summary = "finished", call.ended_at or now(), summary
     connected = db.scalar(select(func.min(m.CallEvent.occurred_at)).where(
         m.CallEvent.call_id == call.id, m.CallEvent.kind == "connected"))
+    if call.purpose == "browser_simulation":
+        connected = call.created_at
     call.duration_seconds = max(0, int((call.ended_at - connected).total_seconds())) if connected else 0
     if call.conversation or technical_failure or call.outcome not in {"No answer", "Voicemail", "Not available"}:
         stop_campaign(db, call)

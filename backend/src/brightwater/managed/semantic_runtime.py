@@ -17,7 +17,7 @@ from brightwater.policy import Rejected, explicit_opt_out, explicit_recording_re
 
 
 def snapshot(db, call, *, conversation=None, proposal_id=None):
-    if conversation is not None and not conversation.trusted_phone and call.purpose != "managed_evaluation":
+    if conversation is not None and not conversation.trusted_phone and call.purpose not in {"managed_evaluation", "browser_simulation"}:
         raise Rejected("managed_closed", "Evaluation session is absent, expired or closed", 403)
     person = db.get(m.Customer, call.customer_id)
     phone = call.purpose in {'engineering', 'campaign'}
@@ -104,6 +104,16 @@ def record_meaning(db, call, evidence):
                     'source_event_id': evidence.source_id, 'message_delivered': False}))
     disposition = evidence.meaning.disposition
     if disposition != 'none' and (disposition == 'not_available' or call.identity_verified):
+        if call.purpose == 'browser_simulation':
+            source = db.scalar(select(m.CallEvent).where(m.CallEvent.call_id == call.id,
+                m.CallEvent.provider_event_id == evidence.source_id, m.CallEvent.kind == 'user_utterance'))
+            if source and source.payload.get('text') == evidence.reply:
+                key = 'browser-disposition:' + source.id
+                if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id,
+                    m.CallEvent.provider_event_id == key)):
+                    svc.record_event(db, call.id, s.EventInput(provider_event_id=key, kind=disposition,
+                        occurred_at=source.occurred_at, payload={'source': 'browser_simulation', 'utterance_event_id': source.id}))
+            return
         source = db.get(m.CallEvent, evidence.source_id)
         if (call.purpose in {'engineering', 'campaign'} and source and source.call_id == call.id
             and source.kind == 'user_utterance' and source.payload.get('source') == 'plivo_elevenlabs_observer'

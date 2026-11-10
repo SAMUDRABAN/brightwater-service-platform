@@ -57,6 +57,36 @@ def create_evaluation(db, customer_id):
     return {"id": call.id, "customer_name": customer.name, "purpose": call.purpose}
 
 
+def create_diary_simulation(db, customer_id):
+    from datetime import date
+
+    from brightwater.seed import CUSTOMERS
+    fixture = next((row for row in CUSTOMERS if row[0] == customer_id), None)
+    if not fixture:
+        raise Rejected("not_found", "Choose a fictional assessment fixture", 404)
+    _, name, kind, _, _, _, properties = fixture
+    customer = m.Customer(id="ENGINEERING-BROWSER-" + m.uid()[:16],
+        name=name + " (browser test)", kind=kind, source_phone="Browser roleplay",
+        contact_blocked=True, notes="Fictional browser simulation; excluded from telephone campaigns.")
+    db.add(customer)
+    db.flush()
+    for address, boiler, year, service, due in properties:
+        prop = m.Property(id=m.uid(), customer_id=customer.id, address=address, boiler=boiler, boiler_year=year)
+        db.add(prop)
+        db.flush()
+        db.add(m.Obligation(id=m.uid(), property_id=prop.id, service=service, due_date=date.fromisoformat(due)))
+    dest = m.Destination(customer_id=customer.id, phone="BROWSER-" + m.uid()[:20], enabled=False,
+        consent_reference="Browser roleplay only; no telephone destination")
+    db.add(dest)
+    db.flush()
+    call = m.Call(customer_id=customer.id, destination_id=dest.id, year=now().year, attempt=1,
+        purpose="browser_simulation", request_key=m.uid(), state="in_progress", time_band="evaluation",
+        release_id=settings().release_id)
+    db.add(call)
+    db.flush()
+    return {"id": call.id, "customer_name": customer.name, "purpose": call.purpose}
+
+
 class Conversation:
     def __init__(self, call_id, *, text_only=False, trusted_phone=False):
         self.call_id, self.text_only = call_id, text_only
@@ -104,7 +134,7 @@ class Conversation:
             svc.control_lock(db)
         call = db.scalar(select(m.Call).where(m.Call.id == self.call_id).with_for_update())
         max_age = ATTENDED_SESSION_TTL_SECONDS if self.trusted_phone else 240
-        if not call or call.purpose not in ({"engineering", "campaign"} if self.trusted_phone else {"managed_evaluation"}) or call.state != "in_progress" or call.created_at < now() - timedelta(seconds=max_age):
+        if not call or call.purpose not in ({"engineering", "campaign"} if self.trusted_phone else {"managed_evaluation", "browser_simulation"}) or call.state != "in_progress" or call.created_at < now() - timedelta(seconds=max_age):
             raise Rejected("managed_closed", "Evaluation session is absent, expired or closed", 403)
         utterance = self.latest_user()
         text = utterance["text"] if utterance else ""
@@ -347,9 +377,9 @@ class Conversation:
                 raise Rejected("booking_cancelled", "This arrangement was cancelled; prepare a fresh proposal")
             return {"confirmed": True, "booking_id": existing.id}
         expected = self.readbacks.get(proposal_id)
-        # This candidate uses provider text order, NOT original speech/playout
-        # timestamps. Phone bookings remain blocked until that contract qualifies.
-        if not self.text_only:
+        # Browser roleplays use provider turn order. PSTN bookings use the
+        # independently checked speech and carrier playback path above.
+        if not self.text_only and call.purpose != "browser_simulation":
             raise Rejected("managed_audio_unqualified", "Voice booking confirmation is not qualified; use the text evaluation to validate booking integration")
         user = self.latest_user()
         previous = self.previous_agent()
@@ -363,7 +393,7 @@ class Conversation:
         if db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.kind.in_(["gas_emergency", "co_alarm", "urgent"])).limit(1)):
             raise Rejected("unsafe_service_booking", "Urgent or emergency issues need human follow-up")
         self.event(db, call, "managed_confirmation", {"proposal_id": proposal.id, "fingerprint": proposal.fingerprint,
-                   "contract": "text_only_ordered_turns", "readback": previous["text"], "affirmative": user["text"],
+                   "contract": "browser_simulation_ordered_turns" if call.purpose == "browser_simulation" else "text_only_ordered_turns", "readback": previous["text"], "affirmative": user["text"],
                    "speech_timing_verified": False})
         booking = svc.reserve(db, call, proposal)
         return {"confirmed": True, "booking_id": booking.id, "total_pence": booking.total_pence,

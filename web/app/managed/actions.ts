@@ -12,7 +12,11 @@ export async function startManaged(customerId: string, textOnly: boolean) {
         Authorization: `Bearer ${await staffToken()}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ customer_id: customerId, text_only: textOnly }),
+      body: JSON.stringify({
+        customer_id: customerId,
+        text_only: textOnly,
+        shared_diary: !textOnly,
+      }),
       cache: "no-store",
       signal: AbortSignal.timeout(15000),
     });

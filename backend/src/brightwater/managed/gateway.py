@@ -1,4 +1,4 @@
-"""Native ElevenLabs server tools, scoped to an isolated evaluation diary."""
+"""Native ElevenLabs server tools for phone calls and browser evaluations."""
 import hashlib
 import json
 import secrets
@@ -20,6 +20,7 @@ from brightwater.db import engine as office_engine
 from brightwater.managed.engine import (
     Conversation,
     arrangement_error,
+    create_diary_simulation,
     create_evaluation,
     lab_engine,
 )
@@ -30,6 +31,7 @@ class StartInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     customer_id: str
     text_only: bool = True
+    shared_diary: bool = False
 
 
 class ToolInput(BaseModel):
@@ -92,13 +94,15 @@ def conversation_from_history(call_id, text_only, raw, state):
             conv.user(text)
         elif role == "agent":
             conv.agent(text)
+            if entry.get("interrupted") is True:
+                conv.interrupt()
     conv.readbacks = state.get("readbacks", {})
     return conv
 
 
 def closed_result(db, call_id, *, phone=False):
     call = db.get(m.Call, call_id)
-    if call and call.purpose in ({"engineering", "campaign"} if phone else {"managed_evaluation"}) and call.state in {"finished", "failed"}:
+    if call and call.purpose in ({"engineering", "campaign"} if phone else {"managed_evaluation", "browser_simulation"}) and call.state in {"finished", "failed"}:
         if phone and call.outcome in {'Voicemail', 'Do not call'}:
             return {'finished': True, 'outcome': call.outcome,
                     'instruction': 'The phone gateway is closing this call. Wait without speaking or invoking end_call.'}
@@ -149,11 +153,13 @@ def install(app, operator, scoped_call):
     @app.get("/v1/managed/evaluations", dependencies=[Depends(operator)])
     def evaluations():
         enabled()
+        with Session(office_engine()) as db:
+            shared = db.scalars(select(m.Call).where(m.Call.purpose == "browser_simulation").order_by(m.Call.created_at.desc()).limit(30)).all()
         with Session(lab_engine()) as db:
             calls = db.scalars(select(m.Call).where(m.Call.purpose == "managed_evaluation").order_by(m.Call.created_at.desc()).limit(30)).all()
             return [{"id": c.id, "customer_id": c.customer_id, "state": c.state, "outcome": c.outcome,
                      "identity_verified": c.identity_verified, "summary": c.summary,
-                     "created_at": c.created_at.isoformat(), "purpose": c.purpose} for c in calls]
+                     "created_at": c.created_at.isoformat(), "purpose": c.purpose} for c in sorted([*calls, *shared], key=lambda c: c.created_at, reverse=True)[:30]]
 
     @app.post("/v1/managed/sessions", dependencies=[Depends(operator)])
     def start(body: StartInput):
@@ -164,16 +170,18 @@ def install(app, operator, scoped_call):
         reap_closed_phone_lease(redis)
         if not redis.set("managed:lease", digest, nx=True, ex=300):
             raise Rejected("managed_busy", "A managed evaluation is already active")
+        value = None
         try:
             day = "managed:daily:" + now().date().isoformat()
             count = redis.incr(day)
             redis.expire(day, 86400)
             if count > cfg.managed_evaluation_request_limit:
                 raise Rejected("managed_daily_limit", "Daily engineering evaluation limit reached")
-            with Session(lab_engine(), expire_on_commit=False) as db, db.begin():
-                for old in db.scalars(select(m.Call).where(m.Call.purpose == "managed_evaluation", m.Call.state == "in_progress", m.Call.created_at < now() - timedelta(minutes=5))):
-                    old.state, old.ended_at = "failed", now()
-                value = create_evaluation(db, body.customer_id)
+            with Session(office_engine() if body.shared_diary else lab_engine(), expire_on_commit=False) as db, db.begin():
+                for old in db.scalars(select(m.Call).where(m.Call.purpose == ("browser_simulation" if body.shared_diary else "managed_evaluation"), m.Call.state == "in_progress", m.Call.created_at < now() - timedelta(minutes=5))):
+                    from brightwater.services import finalise
+                    finalise(db, old, "The browser session expired. Review any saved outcome and diary entry.")
+                value = (create_diary_simulation if body.shared_diary else create_evaluation)(db, body.customer_id)
             with httpx.Client(timeout=15) as client:
                 response = client.get("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
                     headers={"xi-api-key": cfg.managed_api_key.get_secret_value()}, params={"agent_id": cfg.managed_agent_id})
@@ -181,10 +189,16 @@ def install(app, operator, scoped_call):
                 signed_url = response.json()["signed_url"]
             # The provider URL is a short-lived browser capability, not an API key.
             redis.setex("managed:call:" + value["id"], 300, digest)
-            redis.setex("managed:cap:" + digest, 300, json.dumps({**value, "text_only": body.text_only, "created_at": now().isoformat(), "conversation_id": None, "readbacks": {}}))
+            redis.setex("managed:cap:" + digest, 300, json.dumps({**value, "text_only": body.text_only, "storage": "shared" if body.shared_diary else "lab", "created_at": now().isoformat(), "conversation_id": None, "readbacks": {}}))
             return {**value, "token": token, "expires_in_seconds": 300, "signed_url": signed_url, "text_only": body.text_only}
         except Exception:
             release_lease(redis, digest)
+            if value and body.shared_diary:
+                from brightwater.services import finalise
+                with Session(office_engine()) as db, db.begin():
+                    call = db.get(m.Call, value["id"], with_for_update=True)
+                    if call and call.state == "in_progress":
+                        finalise(db, call, "The browser session could not connect. No telephone call was placed.")
             raise
 
     @app.post("/runtime/managed/session")
@@ -250,9 +264,12 @@ def install(app, operator, scoped_call):
     @app.post("/v1/managed/evaluations/{call_id}/close", dependencies=[Depends(operator)])
     def close(call_id: str):
         from brightwater.services import finalise
-        with Session(lab_engine()) as db, db.begin():
-            call = db.get(m.Call, call_id)
-            if not call or call.purpose != "managed_evaluation":
+        with Session(office_engine()) as db:
+            shared = db.get(m.Call, call_id)
+            office_simulation = bool(shared and shared.purpose == "browser_simulation")
+        with Session(office_engine() if office_simulation else lab_engine()) as db, db.begin():
+            call = db.get(m.Call, call_id, with_for_update=True)
+            if not call or call.purpose not in {"managed_evaluation", "browser_simulation"}:
                 raise Rejected("not_found", "Evaluation not found", 404)
             if call.state == "in_progress":
                 finalise(db, call, "Native managed evaluation ended. Outcome derives from saved business facts. No telephone call was made.")
@@ -288,7 +305,7 @@ def install(app, operator, scoped_call):
             if state["conversation_id"] not in {None, x_brightwater_conversation} or body.text_only != state["text_only"]:
                 raise Rejected("session_mismatch", "Provider conversation binding mismatch", 403)
             if redis.get("managed:lease") != digest:
-                with Session(office_engine() if state.get("storage") == "phone" else lab_engine()) as db:
+                with Session(office_engine() if state.get("storage") in {"phone", "shared"} else lab_engine()) as db:
                     terminal = closed_result(db, state["id"], phone=state.get("storage") == "phone")
                 if terminal and state["conversation_id"] == x_brightwater_conversation:
                     return terminal
@@ -300,7 +317,7 @@ def install(app, operator, scoped_call):
                 wait_for_caller(lambda: Session(office_engine()), state["id"], conv.latest_user()["text"])
             from brightwater.managed.semantic_runtime import snapshot
             from brightwater.managed.understanding import interpret
-            with Session(office_engine() if conv.trusted_phone else lab_engine()) as evidence_db:
+            with Session(office_engine() if state.get("storage") in {"phone", "shared"} else lab_engine()) as evidence_db:
                 current = evidence_db.get(m.Call, state["id"])
                 semantic_snapshot = snapshot(evidence_db, current, conversation=conv,
                                              proposal_id=body.arguments.get("proposal_id"))
@@ -310,8 +327,8 @@ def install(app, operator, scoped_call):
             # Tool identity derives from the provider-bound history and arguments,
             # never from a model-supplied request key or confirmation statement.
             operation = hashlib.sha256(json.dumps([name, body.arguments, conv.turns], sort_keys=True).encode()).hexdigest()
-            with Session(office_engine() if conv.trusted_phone else lab_engine(), expire_on_commit=False) as db, db.begin():
-                if conv.trusted_phone:
+            with Session(office_engine() if state.get("storage") in {"phone", "shared"} else lab_engine(), expire_on_commit=False) as db, db.begin():
+                if state.get("storage") in {"phone", "shared"}:
                     from brightwater.services import control_lock
                     control_lock(db)
                 save_transcript(db, state["id"], conv)
