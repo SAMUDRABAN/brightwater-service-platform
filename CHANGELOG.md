@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.1] - 2026-11-10
+
+- Restore all third-party dependency pins after the release version update accidentally changed an unrelated 0.3.1 dependency to a non-existent 0.4.0. Only the Brightwater package version changes. CI and image build rejected 0.4.0 before activation; the live deployment was unaffected.
+
 ## [0.4.0] - 2026-11-10
 
 - Route automatic 28-day reminders to a separately gated native ElevenLabs UK campaign, removing the legacy LiveKit dispatch path. Keep India attended tests isolated.
