@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2 — 10 November 2026
+
+- Prepare an encrypted, single-use provider connection URL while an authorised phone rings, with the existing authenticated active-call gate and normal fallback.
+- Prefetch readback language analysis from captions during speech; saved actions still require actual completed carrier playback and a subsequent caller reply.
+- Shorten the conversation prompt and opening; retain concise complete one-property and landlord readback regression cases.
+- Capture numeric startup stages for the next attended comparison. Voice, model, audio codec and turn/interrupt settings remain unchanged.
+- Allow operational test totals to be configured without a code release; the actual private allowance remains 21 with 21 used and no additional phone call authorised.
+
 ## 0.2.1 — 10 November 2026
 
 - Permit a configured twenty-first attended engineering attempt after explicit owner authorisation. The deployed private allowance determines actual admission; historical attempts are preserved.

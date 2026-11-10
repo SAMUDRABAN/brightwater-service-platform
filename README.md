@@ -2,7 +2,7 @@
 
 A branded office CRM and outbound service-reminder candidate for **Brightwater Plumbing & Heating Ltd**, built for The Meraki Group assessment `TMG-TA-2611-01`.
 
-**Version 0.2.1 · engineering candidate.** Customer calling is paused. The office is deployed, 20 owner-attended engineering attempts are retained and two fictional bookings were saved. The physical tests used India; a UK route and six complete scenario-specific telephone artefacts remain qualification gates. This is not a claim of production readiness or full assessment completion.
+**Version 0.2.2 · engineering candidate.** Customer calling is paused. The office is deployed, 21 owner-attended engineering attempts are retained and three fictional bookings were saved. The physical tests used India; a UK route and six complete scenario-specific telephone artefacts remain qualification gates. This is not a claim of production readiness or full assessment completion.
 
 [Office login](https://office.46.101.11.137.sslip.io/login) · [Assessment coverage](docs/submission/assessment-coverage.md) · [Note to Mark](docs/submission/note-to-mark.md) · [Technical handover](docs/submission/written-summary.md)
 

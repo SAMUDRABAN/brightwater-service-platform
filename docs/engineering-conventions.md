@@ -9,7 +9,7 @@ There is no single UK-wide mandatory convention for Python identifiers, React fi
 | Prices | Integer pence in the database; GBP formatting in the interface. All brief service prices include VAT. No floating-point money calculations. |
 | Telephone numbers | E.164 for approved destinations. UK campaigns and separately allowlisted India engineering tests remain distinct. Original assessment numbers are never dialled. |
 | Source names | Python `snake_case`; TypeScript `camelCase`; components/types `PascalCase`; readable route and document filenames. Stable identifiers are not renamed for cosmetic consistency. |
-| Versions | Semantic Versioning, currently `0.2.0` for an engineering candidate. Version metadata is checked and tags are `vX.Y.Z`. A version label is not a production qualification claim. |
+| Versions | Semantic Versioning, currently `0.2.2` for an engineering candidate. Version metadata is checked and tags are `vX.Y.Z`. A version label is not a production qualification claim. |
 | Data and permissions | PostgreSQL constraints and transactions, typed API validation, explicit staff roles, revocable sessions and immutable action history. |
 | Delivery | Frozen dependencies, CI, focused commits, recorded checks, release notes and a rollback reference. Secrets and private caller artefacts stay outside source and Git history. |
 

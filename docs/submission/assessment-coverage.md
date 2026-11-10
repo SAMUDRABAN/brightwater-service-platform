@@ -8,8 +8,8 @@ Reference TMG-TA-2611-01. “Implemented” does not mean handset-qualified or r
 | Instructions, opening, tool list | [Agent design](agent-design.md), `backend/src/brightwater/managed/prompt.txt`, `managed/agent.py` | Exact source and schemas supplied; private deployed resource IDs excluded |
 | Campaign logic | [Agent design](agent-design.md), policy/services/worker modules | Implemented and database-tested; live UK campaign disabled |
 | Questions for Mark/Sarah | [Agent design](agent-design.md) | Supplied, with reasons |
-| GitHub repository and setup | Repository README | Private repository; reviewer access must be arranged by the owner |
-| Six scenario recordings/transcripts with outcomes | [Evidence index](test-evidence.md), protected office call history | **Incomplete**: 20 attempts retained, not six complete distinct scenario passes |
+| GitHub repository and setup | Repository README | Public source repository; staff access and private recordings remain protected |
+| Six scenario recordings/transcripts with outcomes | [Evidence index](test-evidence.md), protected office call history | **Incomplete**: 21 attempts retained, not six complete distinct scenario passes |
 | Sarah's morning view | `/morning` in the deployed office | Implemented: urgent-first queue, summaries/recording links, yesterday's work, campaign metrics |
 | Note to Mark | [Note to Mark](note-to-mark.md) | Supplied with explicit budget assumptions and no production claim |
 | Two-page handover | [Written summary](written-summary.md) | Supplied as a concise handover |
@@ -27,4 +27,4 @@ Reference TMG-TA-2611-01. “Implemented” does not mean handset-qualified or r
 
 Follow-up resolve/reopen/assignment uses real database rows, scoped permissions, idempotency and immutable notes. It does not change call outcomes or bookings. Complaints remain assigned to Mark. Calling preferences do not clear suppression. Call exports are authenticated and neutralise spreadsheet formulas. Engineers see only their assigned diary and booking items. Unmeasured quality is explicitly labelled. Customer directory lookups are checked with more than 620 records.
 
-All source phone numbers are fictional and blocked for dispatch. The current candidate holds 20 actual engineering attempts and two saved engineering bookings. Local browser-review fixtures are isolated from that data and labelled; they are never imported to production or used as real call evidence.
+All source phone numbers are fictional and blocked for dispatch. The current candidate holds 21 actual engineering attempts and three saved engineering bookings. Local browser-review fixtures are isolated from that data and labelled; they are never imported to production or used as real call evidence.

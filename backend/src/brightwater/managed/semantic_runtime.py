@@ -223,15 +223,29 @@ def prefetch_readback(call_id, event_id):
         with Session(engine()) as db:
             call, speech = db.get(m.Call, call_id), db.get(m.CallEvent, event_id)
             if (not call or call.purpose != 'engineering' or call.state != 'in_progress'
-                or not settings().managed_phone_enabled or not speech or speech.call_id != call_id
-                or speech.kind != 'agent_utterance' or speech.payload.get('source') != 'plivo_elevenlabs_observer'
-                or speech.payload.get('playback_completed') is not True or speech.payload.get('interrupted') is not False):
+                or not settings().managed_phone_enabled or not speech or speech.call_id != call_id):
                 return
+            completed = (speech.kind == 'agent_utterance'
+                and speech.payload.get('source') == 'plivo_elevenlabs_observer'
+                and speech.payload.get('playback_completed') is True
+                and speech.payload.get('interrupted') is False)
+            caption = (speech.kind == 'turn_state'
+                and speech.payload.get('source') == 'managed_agent_prompt'
+                and speech.payload.get('completed') is False)
+            if not (completed or caption):
+                return
+            # Analysis of a caption is only a text-keyed cache warm-up. No event,
+            # identity, proposal or booking is changed here. Commit still needs
+            # actual completed carrier playback of this exact text and a fresh reply.
             proposal = db.scalar(select(m.Proposal).where(m.Proposal.call_id == call_id,
                 m.Proposal.state == 'prepared').order_by(m.Proposal.created_at.desc()).limit(1))
             if not proposal or speech.occurred_at <= proposal.created_at:
                 return
             text = speech.payload.get('text', '')
+            if not isinstance(text, str) or not text.strip() or len(text) > 8000:
+                return
+            if caption and len(text) < 80:
+                return  # Avoid speculative model work for short lookup acknowledgements.
             if complete_readback(text, proposal):
                 return
         extract_facts(text, redis=broker())

@@ -150,7 +150,7 @@ def engineering_status(db: DB):
 
 
 @app.post("/v1/engineering/calls", dependencies=OPERATOR, status_code=202)
-async def engineering_call(body: s.EngineeringCallInput):
+async def engineering_call(body: s.EngineeringCallInput, background_tasks: BackgroundTasks):
     from brightwater.engineering import prepare_engineering
     cfg = settings()
     if not cfg.engineering_enabled:
@@ -185,6 +185,8 @@ async def engineering_call(body: s.EngineeringCallInput):
         with session() as db, db.begin():
             call = db.get(m.Call, call_id)
             call.provider_id = provider_id
+        from brightwater.managed.startup import prepare
+        background_tasks.add_task(prepare, call_id)
         return {"id": call_id, "state": "dispatching", "purpose": "engineering"}
     except Exception:
         with session() as db, db.begin():
@@ -270,7 +272,8 @@ def events(call_id: str, body: s.EventInput, db: DB, background_tasks: Backgroun
     if body.kind == "user_utterance" and body.payload.get("source") == "plivo_elevenlabs_observer":
         from brightwater.managed.semantic_runtime import prefetch
         background_tasks.add_task(prefetch, call_id, value.id)
-    if body.kind == 'agent_utterance' and body.payload.get('source') == 'plivo_elevenlabs_observer':
+    if (body.kind == 'agent_utterance' and body.payload.get('source') == 'plivo_elevenlabs_observer'
+        or body.kind == 'turn_state' and body.payload.get('source') == 'managed_agent_prompt'):
         from brightwater.managed.semantic_runtime import prefetch_readback
         background_tasks.add_task(prefetch_readback, call_id, value.id)
     return {"event_id": value.id}

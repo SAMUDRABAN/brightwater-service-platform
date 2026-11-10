@@ -148,3 +148,8 @@ A real Chromium browser checked 15 production-build desktop/mobile views against
 The visual review used the supplied logo, Brightwater navy/orange palette and locally served licensed Manrope/Inter fonts. Screenshots are interface evidence, not phone-conversation evidence. Review fixtures were not copied to production.
 
 No phone calls were placed. Existing 20 attempts and two engineering bookings remain the voice evidence baseline. UK PSTN qualification, six distinct assessment scenarios, the prior confirmation-loop/unsaved-office-help findings and the voicemail brief discrepancy remain open; see [assessment coverage](submission/assessment-coverage.md). This CRM release is not a claim that all assessment or production-readiness gates passed.
+
+
+## Call 21 latency candidate — 10 November 2026
+
+The owner-initiated twenty-first call saved a third fictional engineering booking. Connection preparation now overlaps ringing and caption analysis overlaps readback speech; actual playback/current-reply authorisation remains unchanged. The prompt/opening are shorter and 17 native ElevenLabs prompt regressions passed. 441 native backend tests passed in 113.81s, plus final focused checks. Two new regressions fail on the prior code and pass after repair. Real-model factual analysis took 1.748s initially and 0.0006s on cache hit; this is not handset latency. No new call was placed and the configured allowance remains 21/21 used. See [latency evidence and remaining concerns](call21-latency.md).

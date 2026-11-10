@@ -56,7 +56,7 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
     return {
         "name": "Brightwater Managed Candidate — Plivo phone" if phone else "Brightwater Managed Candidate — private engineering",
         "conversation_config": {
-            "agent": {"language": "en", "first_message": "Hi, I'm Alex, Brightwater's AI assistant. This is a recorded engineering test with fictional details. Am I speaking with {{customer_name}}?",
+            "agent": {"language": "en", "first_message": "Hi, I'm Alex, Brightwater's AI assistant. This recorded engineering test uses fictional details. Am I speaking with {{customer_name}}?",
                       "disable_first_message_interruptions": False,
                       "dynamic_variables": {"dynamic_variable_placeholders": {"customer_name": "Helen Price"}},
                       "prompt": {"prompt": prompt, "llm": "gpt-4.1", "temperature": 0.4, "max_tokens": 300,

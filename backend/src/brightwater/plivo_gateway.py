@@ -362,7 +362,7 @@ def create_app(cfg):
             bound = await app.state.redis.get("voice:bind:" + sid)
             if bound.decode() != actual:
                 raise HTTPException(403)
-        context.update(call_uuid=actual, request_uuid=data.get("RequestUUID"), status="answered", answer_verified=True, recording_requested=True)
+        context.update(call_uuid=actual, request_uuid=data.get("RequestUUID"), status="answered", answer_verified=True, recording_requested=True, answer_callback_at=time.time())
         await app.state.store.put(sid, context)
         token = create_stream_token(secret=cfg.gateway_token.get_secret_value(), call_id=context["call_id"], call_uuid=actual, ttl_seconds=120)
         return Response(answer_xml(cfg, sid, token, context["max_seconds"]), media_type="application/xml")
@@ -567,6 +567,10 @@ async def run_voice(app, ws, context, cfg, event):
         finally:
             done.set()
 
+    startup_timing = {"media_handler_at": time.time()}
+    if context.get("answer_callback_at") is not None:
+        startup_timing["answer_callback_at"] = context["answer_callback_at"]
+    context["startup_timing"] = startup_timing
     session = None
     stage = "media_start"
     diagnostic_hold = False
@@ -574,13 +578,16 @@ async def run_voice(app, ws, context, cfg, event):
     receive = asyncio.create_task(receiver())
     try:
         await transport.wait_ready()
+        startup_timing["authenticated_stream_ready_at"] = time.time()
         # Carrier duplex recording starts before any agent notice/account speech.
         stage = "carrier_recording_start"
         recording_id = await confirmed_recording(app.state.redis, context["sid"])
         context["recording_id"] = recording_id
+        startup_timing["recording_confirmed_at"] = time.time()
         await app.state.store.put(context["sid"], context)
         stage = "connected_audit"
         await event(context, "connected", {"carrier_call_uuid": context["call_uuid"], "recording_id": recording_id}, event_id="plivo-connected:" + context["call_uuid"])
+        startup_timing["connected_audit_completed_at"] = time.time()
         if cfg.voice_backend == "elevenlabs":
             from brightwater.managed.plivo import run_managed_phone
             stage = "managed_conversation"

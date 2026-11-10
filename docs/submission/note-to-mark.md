@@ -4,7 +4,7 @@ The system is designed to remind customers about their annual service or landlor
 
 It identifies itself as an AI assistant. It will not pressure someone who says no, take payment, invent a price, give discounts, call tenants or disclose an account to someone else. A permanent do-not-call request prevents future calls. Gas or carbon monoxide reports interrupt routine booking for safety advice. Genuine complaints and frustrated customers are heard; persistent unrelated or personal abuse receives a warning before a polite ending.
 
-**What works today:** the office is deployed with personal logins and permissions. Real owner-attended phone tests have taken place, with two saved fictional bookings and protected recordings. The new office actions save to the database and keep an audit history.
+**What works today:** the office is deployed with personal logins and permissions. Real owner-attended phone tests have taken place, with three saved fictional bookings and protected recordings. The new office actions save to the database and keep an audit history.
 
 **What is not signed off:** the physical tests used an Indian recipient, not the UK route required by the brief. Six complete scenario-specific telephone artefacts and independent voice/response-time checks remain outstanding. A repeated-confirmation issue and an unsaved office-help request also need resolution. The system is not yet approved to call real customers.
 

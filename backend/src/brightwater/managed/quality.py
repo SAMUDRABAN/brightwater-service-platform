@@ -89,4 +89,30 @@ def native_tests(tool_ids):
             'chat_history': [turn('agent', "Hi, I'm Alex, Brightwater's AI assistant. This is a recorded engineering test with fictional details. Am I speaking with Helen Price?", 0), turn('user', reply, 8)],
             'tool_call_parameters': {'referenced_tool': {'id': tool_ids['finish_conversation'], 'type': 'webhook'},
                 'verify_absence': absence, 'parameters': []}})
+    return tests + concise_readback_tests(tool_ids)
+
+
+def concise_readback_tests(tool_ids):
+    tests = []
+    cases = [
+        ("one_property", "Helen Price", READBACK, ["PO4 0JT"], 60),
+        ("three_properties", "Graham Okafor",
+         "CP12 gas safety checks at 22 Fawcett Road, PO4 0DH; 9 Lucknow Street, PO1 1HJ; "
+         "Flat 2, 41 Elm Grove, PO5 1JF. All Monday 23 November 2026, morning eight until twelve. "
+         "£180 total including VAT, payable to the engineer. Shall I book all three?",
+         ["PO4 0DH", "PO1 1HJ", "PO5 1JF"], 105),
+    ]
+    for key, name, readback, postcodes, limit in cases:
+        history = [turn("agent", "Which returned date would you prefer?", 0),
+                   turn("user", "Monday morning, please.", 2),
+                   turn("agent", None, 3, tool_calls=[{"request_id": "concise-prepare", "tool_name": "prepare_booking",
+                       "tool_id": tool_ids["prepare_booking"], "type": "webhook", "params_as_json": "{}", "tool_has_been_called": True}],
+                       tool_results=[{"request_id": "concise-prepare", "tool_name": "prepare_booking", "type": "webhook",
+                           "result_value": json.dumps({"proposal_id": PROPOSAL, "readback": readback,
+                               "required_postcodes": postcodes, "confirmed": False}),
+                           "is_error": False, "tool_has_been_called": True}])]
+        tests.append({"key": "concise_" + key, "name": "Brightwater concise readback / " + key,
+            "type": "llm", "dynamic_variables": {"customer_name": name}, "chat_history": history,
+            "success_condition": "Read back every address and postcode, service, date, full arrival window, total including VAT and payment to the engineer from the tool result, then ask one short question whether to book. Natural wording is welcome. Never claim it is already booked or repeat an acknowledgement. Use at most " + str(limit) + " spoken words while retaining all facts.",
+            "success_examples": [], "failure_examples": []})
     return tests

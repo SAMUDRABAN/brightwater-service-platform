@@ -160,6 +160,7 @@ class ManagedPlivo:
         self.notice_delivered = False
         self.output_error = None
         self.vad_starts = self.vad_mapped_starts = 0
+        self.first_audio_received_at = None
         self.vad_stream = silero.VAD.load(sample_rate=16000, min_speech_duration=.06,
             min_silence_duration=.25, prefix_padding_duration=.3).stream()
         transport.audio_output.on("playback_finished", self.playback_finished)
@@ -304,15 +305,21 @@ class ManagedPlivo:
                 # assigning those PCM packets to whichever text arrived last.
                 if response_id in response.text_parts and response.text_parts[response_id] != text:
                     raise ValueError("Changed managed response without correction")
-                if response_id not in response.text_parts:
+                new_part = response_id not in response.text_parts
+                if new_part:
                     response.revision += 1
-                    self.record("turn_state", {"source": "managed_agent_prompt", "completed": False,
-                        "native_event_id": identifier, "revision": response.revision})
                 response.text_parts[response_id] = text
                 response.text = " ".join(response.text_parts.values())
+                # A caption can warm language analysis while audio plays. It is
+                # never playback or consent evidence; the carrier ACK still gates writes.
+                if new_part:
+                    self.record("turn_state", {"source": "managed_agent_prompt", "completed": False,
+                        "native_event_id": identifier, "revision": response.revision, "text": response.text})
                 response.complete = alignment_complete(response, {})
                 self.clock.end_turn(identifier)
             elif kind == "audio":
+                if self.first_audio_received_at is None:
+                    self.first_audio_received_at = time.time()
                 self.clock.begin_opening(time.time())
                 item = event["audio_event"]
                 response = self.response_for_audio(item["event_id"])
@@ -437,17 +444,21 @@ class ProviderSocket:
 
 
 async def run_managed_phone(app, context, cfg, transport, event):
+    timing = context.setdefault("startup_timing", {})
+    timing["managed_session_request_at"] = time.time()
     response = await app.state.http.post(cfg.api_url + "/runtime/managed/session",
         headers={"Authorization": "Bearer " + context["session_token"],
                  "X-Brightwater-Runtime": cfg.runtime_token.get_secret_value()}, timeout=20)
     response.raise_for_status()
     details = response.json()
+    timing["managed_session_ready_at"] = time.time()
     url = urlparse(details["signed_url"])
     if url.scheme != "wss" or url.hostname != "api.elevenlabs.io" or url.path != "/v1/convai/conversation":
         raise ValueError("Unexpected managed provider endpoint")
     async def emit(kind, payload, **kwargs):
         await event(context, kind, payload, **kwargs)
     async with connect(details["signed_url"], max_size=2_000_000, open_timeout=15) as socket:
+        timing["provider_socket_ready_at"] = time.time()
         provider = ProviderSocket(socket)
         await provider.send_json({"type": "conversation_initiation_client_data",
             "dynamic_variables": {"customer_name": details["customer_name"], "secret__session_token": details["token"]},
@@ -468,7 +479,9 @@ async def run_managed_phone(app, context, cfg, transport, event):
             # Private bounded diagnostic, no PCM, provider key or capability.
             # Optional capture never turns a provider failure into a success.
             with contextlib.suppress(Exception):
-                payload = {"call_id": context["call_id"], "transport_failure": transport.failure_reason,
+                payload = {"call_id": context["call_id"], "startup_timing": {
+                    **timing, "first_provider_audio_at": getattr(bridge, "first_audio_received_at", None)},
+                    "transport_failure": transport.failure_reason,
                     "transport_failure_snapshot": transport.failure_snapshot,
                     "transport_close": transport.close_reason, "pending_playback": len(bridge.playing),
                     "vad_sample_rate": 16000, "vad_starts": getattr(bridge, "vad_starts", 0),

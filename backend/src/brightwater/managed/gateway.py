@@ -2,6 +2,7 @@
 import hashlib
 import json
 import secrets
+import time
 from datetime import timedelta
 from typing import Annotated
 
@@ -198,13 +199,26 @@ def install(app, operator, scoped_call):
         if not redis.set("managed:lease", digest, nx=True, ex=ATTENDED_SESSION_TTL_SECONDS):
             raise Rejected("managed_busy", "Another managed session is active")
         try:
-            with httpx.Client(timeout=15) as client:
-                response = client.get("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
-                    headers={"xi-api-key": cfg.managed_api_key.get_secret_value()}, params={"agent_id": cfg.managed_phone_agent_id})
-                response.raise_for_status()
+            from brightwater.managed.startup import consume
+            url_started = time.perf_counter()
+            signed_url = consume(redis, call.id, cfg)
+            prepared = signed_url is not None
+            if signed_url is None:
+                with httpx.Client(timeout=15) as client:
+                    response = client.get("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
+                        headers={"xi-api-key": cfg.managed_api_key.get_secret_value()}, params={"agent_id": cfg.managed_phone_agent_id})
+                    response.raise_for_status()
+                    signed_url = response.json()["signed_url"]
+            try:
+                meta_key = "managed:phone-startup-meta:" + call.id
+                meta = json.loads(redis.get(meta_key) or "{}")
+                meta.update(prepared_url_hit=prepared, url_phase_seconds=time.perf_counter() - url_started)
+                redis.setex(meta_key, 86400, json.dumps(meta))
+            except Exception:
+                pass  # Optional numeric timing never authorises or terminates a call.
             redis.setex("managed:cap:" + digest, ATTENDED_SESSION_TTL_SECONDS, json.dumps({"id": call.id, "storage": "phone",
                 "text_only": False, "conversation_id": None, "readbacks": {}}))
-            return {"token": token, "signed_url": response.json()["signed_url"], "customer_name": name,
+            return {"token": token, "signed_url": signed_url, "customer_name": name,
                     "agent_id": cfg.managed_phone_agent_id}
         except Exception:
             release_lease(redis, digest)
