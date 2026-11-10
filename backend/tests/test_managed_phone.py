@@ -491,7 +491,8 @@ def test_phone_quality_never_hides_consent_or_adds_speech_before_commit():
     tools = {t['name']: t for t in phone['conversation_config']['agent']['prompt']['tools']}
     assert tools['check_availability']['pre_tool_speech'] == 'force'
     assert tools['prepare_booking']['pre_tool_speech'] == 'off'
-    for name in ['confirm_identity', 'confirm_booking', 'cancel_arrangement', 'record_followup', 'finish_conversation']:
+    assert tools['record_followup']['pre_tool_speech'] == 'force'
+    for name in ['confirm_identity', 'confirm_booking', 'cancel_arrangement', 'finish_conversation']:
         assert tools[name]['pre_tool_speech'] == 'off'
     assert phone['conversation_config']['turn']['interruption_ignore_terms'] == []
     assert not set(browser['conversation_config']['turn']['interruption_ignore_terms']) & {'yes', 'no', 'stop', 'cancel'}
