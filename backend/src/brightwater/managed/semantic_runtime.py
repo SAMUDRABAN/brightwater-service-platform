@@ -95,6 +95,13 @@ def record_meaning(db, call, evidence):
             if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.provider_event_id == key)):
                 svc.record_event(db, call.id, s.EventInput(provider_event_id=key, kind='urgent',
                     occurred_at=source.occurred_at, payload={'source': 'server_semantic_turn', 'detail': evidence.reply[:1500]}))
+    if evidence.meaning.control == 'voicemail' and terminal_reason(db, call, evidence) == 'voicemail':
+        key = 'voicemail-detected:' + call.id
+        if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id,
+            m.CallEvent.provider_event_id == key)):
+            svc.record_event(db, call.id, s.EventInput(provider_event_id=key, kind='voicemail',
+                occurred_at=now(), payload={'source': 'verified_caller_automation',
+                    'source_event_id': evidence.source_id, 'message_delivered': False}))
     disposition = evidence.meaning.disposition
     if disposition != 'none' and (disposition == 'not_available' or call.identity_verified):
         source = db.get(m.CallEvent, evidence.source_id)

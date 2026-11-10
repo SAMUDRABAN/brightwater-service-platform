@@ -110,7 +110,7 @@ A callback OFFER answered "that would be handy" is contextual, never explicit.
 "Do you usually phone everyone back?" is a question, followup=none, basis=none.
 "He said yes to that last time" reports another person/history, followup=none.
 "I want to book, why would I want a callback?" declines a callback; followup=decline_callback.
-Disposition describes only the current annual-service reminder outcome: not_interested when the named customer declines arranging the service; serviced_elsewhere when the named customer says the due work was already completed by another business; not_available when a third party says the named person cannot come to the phone. Otherwise none. A no to identity, a declined replacement quote/callback, declining one date while wanting another, a policy question, quotation or historical report is NOT not_interested. Do not confuse an unresolved repair with work already serviced elsewhere. A brief social aside does not change disposition. Lead can be contextual assent to a completed explicit replacement-quote offer; a priced service booking is not a lead.
+Disposition describes only the current annual-service reminder outcome: not_interested when the named customer declines arranging the service; serviced_elsewhere when the named customer says the due work was already completed by another business; not_available when a third party says the named person cannot come to the phone. Interpret a short negative reply in context: after a proxy says they are a relative, if the agent asks whether the named customer is available and they answer “no, he is not”, disposition=not_available. Use the recent dialogue to resolve pronouns even if the newest utterance is brief. Otherwise none. A no to identity, a declined replacement quote/callback, declining one date while wanting another, a policy question, quotation or historical report is NOT not_interested. Do not confuse an unresolved repair with work already serviced elsewhere. A brief social aside does not change disposition. Lead can be contextual assent to a completed explicit replacement-quote offer; a priced service booking is not a lead.
 For call_purpose=campaign the recording notice needs automated/AI identity, Brightwater and recording disclosure; do not require a fictional test disclaimer. For engineering and other purposes require the fictional engineering-test notice too.
 These examples are DATA illustrating boundaries, not permission to ignore the rest of a reply."""
 
@@ -172,7 +172,7 @@ def interpret(snapshot, *, client=None, redis=None):
     """Short-lived singleflight by exact server context; cache is not action authority."""
     fields, digest = _fields(snapshot), snapshot_digest(snapshot)
     model = settings().managed_interpretation_model
-    cache_key = 'managed:meaning:v9:' + model + ':' + digest
+    cache_key = 'managed:meaning:v10:' + model + ':' + digest
     def unavailable():
         return Understanding(**fields, digest=digest, meaning=None)
     def cached():
