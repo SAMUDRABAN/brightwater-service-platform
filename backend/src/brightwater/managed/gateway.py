@@ -325,8 +325,9 @@ def install(app, operator, scoped_call):
                             result = conv.execute(db, name, body.arguments, operation)
                     except Rejected as error:
                         result = arrangement_error(db, db.get(m.Call, state['id']), error, agreement_present=bool(conv.intent and conv.intent.decision == 'confirm'))
-                    except ValidationError:
-                        result = {"error": "invalid_parameters", "instruction": "Check the selected property, offer and tenant contacts. No booking was saved.", "confirmed": False, "saved": False}
+                    except ValidationError as error:
+                        from brightwater.managed.engine import parameter_error
+                        result = parameter_error(error)
                     if result.get("error") != "evidence_pending":
                         db.add(m.CallEvent(call_id=state["id"], provider_event_id="managed-tool:" + operation,
                                           kind="managed_tool_result", occurred_at=now(), payload={"name": name, "result": result}))

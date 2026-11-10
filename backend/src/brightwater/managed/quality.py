@@ -90,7 +90,7 @@ def native_tests(tool_ids):
             'chat_history': [turn('agent', "Hi, I'm Alex, Brightwater's AI assistant. This is a recorded engineering test with fictional details. Am I speaking with Helen Price?", 0), turn('user', reply, 8)],
             'tool_call_parameters': {'referenced_tool': {'id': tool_ids['finish_conversation'], 'type': 'webhook'},
                 'verify_absence': absence, 'parameters': []}})
-    return tests + concise_readback_tests(tool_ids) + arrangement_tests(tool_ids) + brief_tests(tool_ids)
+    return tests + concise_readback_tests(tool_ids) + arrangement_tests(tool_ids) + brief_tests(tool_ids) + booking_recovery_tests(tool_ids)
 
 
 def concise_readback_tests(tool_ids):
@@ -170,3 +170,42 @@ def brief_tests(tool_ids):
             'success_condition':('Ask one optional replacement-boiler quote interest question and WAIT. Do not call finish_conversation/end_call, claim the appointment is saved or quote a replacement price.' if offer else 'Briefly confirm the saved visit and tell them to expect Brightwater’s evening-before text with a two-hour arrival estimate, plus payment to the engineer. Close warmly using native end_call. No extra booking confirmation or generic further-help question.'),
             'success_examples':[], 'failure_examples':[]})
     return tests
+
+
+def booking_recovery_tests(tool_ids):
+    def result(tool, value, at, args=None):
+        return turn('agent', None, at, tool_calls=[{'request_id': 'recovery-' + tool,
+            'tool_name': tool, 'tool_id': tool_ids[tool], 'type': 'webhook',
+            'params_as_json': json.dumps({'arguments': args or {}}), 'tool_has_been_called': True}],
+            tool_results=[{'request_id': 'recovery-' + tool, 'tool_name': tool,
+                'type': 'webhook', 'result_value': json.dumps(value),
+                'is_error': False, 'tool_has_been_called': True}])
+    identity = result('confirm_identity', {'verified': True, 'account': {
+        'name': 'Helen Price', 'kind': 'homeowner', 'properties': [
+            {'id': 'BW-1041-P1', 'address': '18 Albert Road, Southsea, PO4 0JT', 'obligations': []}]},
+        'reminder_due': False, 'instruction': 'No unresolved reminders. Do not say a service is due. Close briefly unless the caller requests additional work.'}, 1)
+    cases = [
+        ('no_due_reminder', [identity],
+         'Explain truthfully there is no outstanding reminder and close politely. Do not say any service/certificate is due, invent a deadline, start a diary search or prepare a booking.'),
+        ('homeowner_contact', [identity, turn('user', 'I would like an additional boiler service at number eighteen on Monday afternoon.', 5),
+            result('check_availability', {'options': [{'offer_id': 'quality-homeowner-offer', 'items': [
+                {'property_id': 'BW-1041-P1', 'service': 'service', 'day': '2026-11-16',
+                 'period': 'AFTERNOON', 'engineer_id': 'dan', 'engineer_name': 'Dan Hughes'}]}]}, 6),
+            turn('agent', 'Monday afternoon with Dan Hughes is available.', 7), turn('user', 'Yes, that one please.', 8)],
+         'The first prepare_booking request must use offer_id quality-homeowner-offer and tenants as an empty array (or omitted). Do not ask for tenant names, occupant details or contact phone numbers for this homeowner, or claim the booking is saved. Subsequent safe handling of missing test-session authentication is not a booking failure in this test.'),
+        ('validation_not_capacity', [identity,
+            result('check_availability', {'options': [{'offer_id': 'quality-homeowner-offer', 'items': [
+                {'property_id': 'BW-1041-P1', 'service': 'service', 'day': '2026-11-16',
+                 'period': 'AFTERNOON', 'engineer_id': 'dan', 'engineer_name': 'Dan Hughes'}]}]}, 3),
+            turn('agent', 'Monday the sixteenth in the afternoon with Dan Hughes is available at eighteen Albert Road.', 4),
+            turn('user', 'Please arrange the Monday visit.', 5),
+            result('prepare_booking', {'error': 'invalid_parameters', 'invalid_fields': ['tenants.0.phone'],
+                'saved': False, 'confirmed': False, 'availability_changed': False,
+                'instruction': 'Preserve Monday. Homeowner uses tenants=[]. Correct the input only; this is not a capacity conflict.'}, 6,
+                {'offer_id': 'quality-homeowner-offer', 'tenants': [{'property_id': 'BW-1041-P1', 'name': 'Helen Price', 'phone': ''}]})],
+         'Treat this as tool-input recovery. Do not claim Monday or another date is unavailable, ask for another booking yes, request tenant contacts, or search for different dates. No saved booking claim. Corrected preparation with tenants=[] or a brief honest explanation that nothing is saved is acceptable.'),
+    ]
+    return [{'key': key, 'name': 'Brightwater booking recovery v1 / ' + key, 'type': 'llm',
+        'dynamic_variables': {'customer_name': 'Helen Price'}, 'chat_history': history,
+        'success_condition': condition, 'success_examples': [], 'failure_examples': []}
+        for key, history, condition in cases]

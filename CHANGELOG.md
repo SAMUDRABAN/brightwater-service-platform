@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.3] - 2026-11-11
+
+- Prepare homeowner visits without unnecessary tenant data; retain strict landlord contact validation. Return specific field errors without raw input or unsupported availability changes.
+- Derive reminder language from unresolved obligations and save callback assent with trusted recent conversation, actual booking status and tool failures.
+- Add attended-call regressions and native recovery cases. Preserve voice, primary model, ASR and interruption settings. No additional phone call is authorised or placed by the repair.
+
 ## [0.4.2] - 2026-11-10
 
 - Return before customer scans when the daily call budget is exhausted, and bulk-read campaign contact state. A620-customer integration check ensures the scheduler takes no booking advisory locks in the exhausted case, protecting live booking latency.

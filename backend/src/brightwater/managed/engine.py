@@ -151,7 +151,11 @@ class Conversation:
             if identified:
                 call.conversation = True
                 self.event(db, call, "identity_assertion", {"evidence": text, "contract": "managed_ordered_turns"})
-                result = {"verified": True, "account": svc.account(db, call), "instruction": "Explain the due service and ask to arrange it now."}
+                account = svc.account(db, call)
+                due = any(p['obligations'] for p in account['properties'])
+                result = {"verified": True, "account": account, "reminder_due": due,
+                    "instruction": ("Explain only the unresolved reminders actually returned, with their property and due date. Ask which work they want to arrange; do not select every property automatically."
+                        if due else "There are no unresolved reminders on this account. Do not say a service or certificate is due or invent a deadline. If the caller requests additional work, clarify its property and service before checking availability; otherwise explain briefly and close politely.")}
             else:
                 result = {"verified": False, "instruction": "Clarify who is speaking once in natural language. Preserve the booking goal; do not invent a callback or claim identity confirmed."}
         elif name == "review_arrangement":
@@ -167,7 +171,11 @@ class Conversation:
                 "items": [{k: v for k, v in i.items() if k in {"property_id", "service", "day", "period", "engineer_id", "engineer_name", "engineer_requested"}} for i in o["items"]]} for o in result["options"]],
                 "instruction": "These are available offers, not saved or held bookings. Explain the actual returned engineer if asked. Preserve the caller's choice while answering questions; review_arrangement shows the current selection."}
         elif name == "prepare_booking":
-            body = s.PrepareInput.model_validate(args)
+            # Contacts are required only for landlord access. A native model may
+            # send placeholders even though the homeowner has no tenants.
+            svc.verified(call)
+            homeowner = svc.customer(db, call.customer_id).kind == "homeowner"
+            body = s.PrepareInput.model_validate({**args, "tenants": []} if homeowner else args)
             from brightwater.arrangements import current
             existing = current(db, call)
             if existing["saved"]:
@@ -216,18 +224,19 @@ class Conversation:
             if not self.followup_requested(text, kind):
                 result = {"saved": False, "instruction": "No explicit request found. This is not a system error. Do not claim a request was recorded. Preserve the caller's booking goal."}
             else:
+                detail = self.followup_detail(db, call, text, kind)
                 existing = db.scalar(select(m.Followup).where(m.Followup.call_id == call.id,
-                    m.Followup.kind == kind, m.Followup.detail == text[:1500]).limit(1))
+                    m.Followup.kind == kind, m.Followup.detail == detail).limit(1))
                 if existing:
                     result = {"saved": True, "request_id": existing.id, "instruction": "The reported issue is already in the office queue. Do not duplicate it or promise a response time. Close briefly when appropriate."}
                     self.results[tool_id] = result
                     return result
                 key = f"followup:{kind}:{self.turns.index(utterance)}"
                 if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.provider_event_id == key)):
-                    event = self.event(db, call, kind, {"detail": text}, key)
+                    event = self.event(db, call, kind, {"detail": detail, "caller_reply": text}, key)
                     db.add(m.Followup(call_id=call.id, kind=kind, owner="Mark" if kind == "complaint" else "Sarah",
                                       priority=0 if kind in {"urgent", "gas_emergency", "co_alarm"} else 1,
-                                      detail=text[:1500], requested=kind in {"callback", "lead"}))
+                                      detail=detail, requested=kind in {"callback", "lead"}))
                     db.flush()
                 else:
                     event = None
@@ -250,6 +259,39 @@ class Conversation:
             raise Rejected("unknown_tool", "Unsupported managed tool", 422)
         self.results[tool_id] = result
         return result
+
+    def followup_detail(self, db, call, text, kind):
+        if kind != 'callback':
+            return text[:1500]
+        # Keep the assent as evidence, with the business context Sarah needs.
+        # Telephone context comes from original authenticated observer events,
+        # not an LLM-supplied summary or provider-rewritten transcript.
+        if self.trusted_phone:
+            rows = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id,
+                m.CallEvent.kind.in_(['user_utterance', 'agent_utterance'])).order_by(
+                    m.CallEvent.occurred_at, m.CallEvent.received_at)))
+            turns = [{'role': 'agent' if e.kind == 'agent_utterance' else 'user',
+                      'text': e.payload.get('text', '')} for e in rows
+                     if e.payload.get('source') == 'plivo_elevenlabs_observer'
+                     and (e.kind == 'user_utterance' and e.payload.get('speech_timing_verified') is True
+                          or e.kind == 'agent_utterance' and e.payload.get('playback_completed') is True
+                          and e.payload.get('interrupted') is False)]
+        else:
+            turns = [t for t in self.turns if not t.get('interrupted')]
+        failures = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id,
+            m.CallEvent.kind == 'managed_tool_result').order_by(m.CallEvent.occurred_at.desc()).limit(12)))
+        errors = list(dict.fromkeys(e.payload['result']['error'] for e in failures
+                      if isinstance(e.payload.get('result'), dict) and e.payload['result'].get('error')))
+        context = '\n'.join(('Caller: ' if t['role'] == 'user' else 'Agent: ') + t['text'][:180]
+                            for t in turns[-6:])
+        from brightwater.arrangements import current
+        status = current(db, call)
+        header = ('Office help requested. Caller reply: ' + text[:250]
+                  + '\nBooking status: ' + status['status']
+                  + ('; saved booking ' + status['booking_id'] if status.get('saved') else '; no saved booking'))
+        if errors:
+            header += '\nTool failures: ' + ', '.join(errors[:4])
+        return (header + '\nRecent conversation (quoted, not booking confirmation):\n' + context)[:1500]
 
     def followup_requested(self, text, kind):
         evidence = self.understanding
@@ -338,10 +380,21 @@ def run_tool(conversation, name, args, tool_id):
         try:
             with db.begin_nested():
                 return conversation.execute(db, name, args, tool_id)
-        except ValidationError:
-            return {"error": "invalid_parameters", "instruction": "Check required property, offer and tenant fields; no booking was saved.", "confirmed": False, "saved": False}
+        except ValidationError as error:
+            return parameter_error(error)
         except Rejected as error:
             return arrangement_error(db, db.get(m.Call, conversation.call_id), error, agreement_present=bool(conversation.intent and conversation.intent.decision == "confirm"))
+
+
+def parameter_error(error):
+    # Return actionable field paths, never Pydantic's raw input/PII/context.
+    fields = sorted({'.'.join(str(part) for part in item['loc']) for item in error.errors(include_input=False, include_context=False, include_url=False)})
+    tenant_phone = any(field.startswith('tenants.') and field.endswith('.phone') for field in fields)
+    return {"error": "invalid_parameters", "invalid_fields": fields, "confirmed": False, "saved": False,
+        "availability_changed": False, "customer_confirmation_needed": False,
+        "instruction": ("No booking was saved and this result does not mean the slot is unavailable. Preserve the selected offer. "
+            + ("For a landlord, obtain the missing tenant contact with an international phone number including country code; never invent a country code. For a homeowner use tenants=[]. " if tenant_phone else "Correct only the listed tool fields using the account and returned offer. ")
+            + "Do not claim dates changed, ask for another booking yes, or collect homeowner tenant contacts. Retry only after correcting these fields.")}
 
 
 def arrangement_error(db, call, error, *, agreement_present=False):
