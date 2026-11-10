@@ -43,7 +43,7 @@ def tools(base_url=None, secret_id=None, *, profile="balanced"):
         arguments = {"type": "object", "description": "Business operation arguments", "properties": parameters, "required": [p for p in parameters if p not in OPTIONAL_ARGUMENTS.get(name, set())]}
         if base_url and secret_id:
             result.append({"type": "webhook", "name": name, "description": description,
-                "response_timeout_secs": 10, "pre_tool_speech": "force" if profile != "baseline" and name == "check_availability" else "off", "interruption_mode": "allow",
+                "response_timeout_secs": 10, "pre_tool_speech": "force" if name == "record_followup" or (profile != "baseline" and name == "check_availability") else "off", "interruption_mode": "allow",
                 "api_schema": {"url": base_url + "/v1/managed/tools/" + name, "method": "POST",
                     "request_headers": {"X-Brightwater-Provider": {"secret_id": secret_id},
                         "X-Brightwater-Session": {"variable_name": "secret__session_token"},
