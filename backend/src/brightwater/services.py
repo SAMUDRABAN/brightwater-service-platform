@@ -78,6 +78,12 @@ def check_dial_policy(db, c, dest, at, *, exclude_call=None):
     if suppressed(db, c.id, dest.phone):
         raise Rejected("suppressed", "This customer or number must not be called")
     year = at.astimezone(UK).year
+    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_attempts = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.purpose == "campaign",
+        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1),
+        m.Call.id != exclude_call if exclude_call else True))
+    if day_attempts >= settings().campaign_daily_limit:
+        raise Rejected("daily_campaign_limit", "The bounded daily customer-call allowance has been used")
     contact = db.scalar(select(m.CampaignContact).where(
         m.CampaignContact.customer_id == c.id, m.CampaignContact.year == year))
     if contact and contact.stopped:
@@ -141,12 +147,13 @@ def account(db, call):
                           for e in db.scalars(select(m.Engineer).where(m.Engineer.active.is_(True)).order_by(m.Engineer.name))],
             "properties": [
         {"id": p.id, "address": p.address, "boiler": p.boiler, "boiler_year": p.boiler_year,
+         "replacement_quote_eligible": bool(p.boiler_year and now().astimezone(UK).year - p.boiler_year >= settings().replacement_quote_age_years),
          "obligations": [{"id": o.id, "service": o.service, "due_date": o.due_date.isoformat()} for o in db.scalars(
              select(m.Obligation).where(m.Obligation.property_id == p.id, m.Obligation.resolved.is_(False)))]}
         for p in properties]}
 
 
-def availability(db, call, items, *, preferred_day=None, preferred_period=None, engineer_id=None, after_day=None):
+def availability(db, call, items, *, preferred_day=None, preferred_period=None, engineer_id=None, after_day=None, same_day=True):
     verified(call)
     if len({i.property_id for i in items}) != len(items):
         raise Rejected("duplicate_property", "Select one approved service per property", 422)
@@ -185,9 +192,10 @@ def availability(db, call, items, *, preferred_day=None, preferred_period=None, 
     def allocate(candidates):
         remaining = {w.id: w.capacity_minutes - w.used_minutes for w in candidates}
         proposed = []
-        for item in items:
+        for item in sorted(items, key=lambda i: (-SERVICES[i.service]["minutes"], i.property_id)):
             duration = SERVICES[item.service]["minutes"]
-            window = next((w for w in candidates if remaining[w.id] >= duration), None)
+            window = next((w for w in candidates if remaining[w.id] >= duration
+                and (deadlines[item.property_id] is None or w.day <= deadlines[item.property_id])), None)
             if not window:
                 return []
             remaining[window.id] -= duration
@@ -197,7 +205,16 @@ def availability(db, call, items, *, preferred_day=None, preferred_period=None, 
                 "engineer_name": engineers[window.engineer_id].name,
                 "engineer_requested": engineer_id is not None})
         return proposed
-    for day in sorted({w.day for w in windows}):
+    if not same_day:
+        proposed = allocate(sorted(windows, key=lambda w: (w.day, w.period == "AFTERNOON", w.engineer_id)))
+        if proposed:
+            offer = next((o for o in existing_offers if selection(o.items) == selection(proposed)), None)
+            if offer is None:
+                offer = m.AvailabilityOffer(call_id=call.id, items=proposed, expires_at=now() + timedelta(minutes=5))
+                db.add(offer)
+                db.flush()
+            return {"options": [{"offer_id": offer.id, "items": offer.items, "reserved": False}], "reserved": False, "reason": None}
+    for day in sorted({w.day for w in windows}) if same_day else []:
         if any(deadline is not None and day > deadline for deadline in deadlines.values()):
             continue
         day_options = []
@@ -502,7 +519,7 @@ def finalise(db, call, summary):
         facts.add("Do not call")
     fallback = None if answered or "recording_refused" in kinds or call.purpose == "managed_evaluation" else "No answer"
     call.outcome = next((o for o in OUTCOMES if o in facts), fallback)
-    if call.outcome is None and not call.conversation and "recording_refused" not in kinds and not db.scalar(
+    if call.outcome is None and answered and "recording_refused" not in kinds and not any(e.kind == "turn_state" and e.payload.get("source") == "boundary_terminal_requested" for e in events) and not db.scalar(
         select(m.Followup.id).where(m.Followup.call_id == call.id, m.Followup.kind == "internal_review").limit(1)
     ):
         db.add(m.Followup(call_id=call.id, kind="internal_review", owner="Sarah", priority=1,

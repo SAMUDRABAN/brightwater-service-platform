@@ -49,7 +49,8 @@ with httpx.Client(base_url='https://api.elevenlabs.io', headers={'xi-api-key': o
                 tool_ids[name] = tid
         assert {'prepare_booking', 'confirm_booking', 'cancel_arrangement'} <= set(tool_ids), 'Required tool identity absent'
         tests = state.setdefault('agents', {}).setdefault(aid, {'tests': {}})['tests']
-        for definition in native_tests(tool_ids):
+        definitions = native_tests(tool_ids)
+        for definition in definitions:
             body = dict(definition)
             key = body.pop('key')
             digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
@@ -72,6 +73,9 @@ with httpx.Client(base_url='https://api.elevenlabs.io', headers={'xi-api-key': o
                 'verify_absence': evaluation.get('verify_absence', False),
                 'expected_proposal_id': 'quality-fixture-proposal' if expected in {'confirm_booking', 'cancel_arrangement'} and not evaluation.get('verify_absence') else None}
             save()
-        state['agents'][aid]['test_ids'] = [v['id'] for v in tests.values()]
+        active_keys = {definition['key'] for definition in definitions}
+        for key, value in tests.items():
+            value['retired'] = key not in active_keys
+        state['agents'][aid]['test_ids'] = [v['id'] for v in tests.values() if not v['retired']]
         save()
-        print(json.dumps({'agent_state': file.name, 'native_tests': len(tests), 'dictionary_provisioned': True}))
+        print(json.dumps({'agent_state': file.name, 'native_tests': len(active_keys), 'retained_test_versions': len(tests), 'dictionary_provisioned': True}))

@@ -209,3 +209,21 @@ def test_engineer_question_overrides_assent_without_saving_or_researching_dates(
         assert result["arrangement"]["proposal_id"] == prepared["proposal_id"]
         assert conv.readbacks[prepared["proposal_id"]].get("failed_readbacks", 0) == 0
         assert db.scalar(select(func.count()).select_from(m.Booking)) == 0
+
+
+def test_landlord_separate_days_still_form_one_discounted_proposal():
+    with session() as db, db.begin():
+        call, _ = make_call(db, "BW-1056")
+        for window in db.scalars(select(m.DiaryWindow)):
+            window.used_minutes = window.capacity_minutes
+        for day in [23, 24, 25]:
+            free(db, date(2026, 11, day)).used_minutes = 120
+        db.flush()
+        items = [s.ServiceItem(property_id=f"BW-1056-P{i}", service="cp12") for i in range(1, 4)]
+        assert not svc.availability(db, call, items)["options"]
+        separate = svc.availability(db, call, items, same_day=False)["options"]
+        assert len(separate) == 1
+        assert len({i["day"] for i in separate[0]["items"]}) == 3
+        tenants = [s.Tenant(property_id=i.property_id, name="Fictional tenant", phone="+447911111111") for i in items]
+        proposal = svc.prepare(db, call, separate[0]["offer_id"], tenants)
+        assert proposal.total_pence == 18000 and len(proposal.items) == 3

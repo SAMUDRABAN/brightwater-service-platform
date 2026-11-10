@@ -17,8 +17,10 @@ from brightwater.policy import Rejected, explicit_opt_out, explicit_recording_re
 
 
 def snapshot(db, call, *, conversation=None, proposal_id=None):
+    if conversation is not None and not conversation.trusted_phone and call.purpose != "managed_evaluation":
+        raise Rejected("managed_closed", "Evaluation session is absent, expired or closed", 403)
     person = db.get(m.Customer, call.customer_id)
-    phone = call.purpose == 'engineering'
+    phone = call.purpose in {'engineering', 'campaign'}
     rows = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id).order_by(
         m.CallEvent.occurred_at, m.CallEvent.received_at)))
     if phone:
@@ -53,7 +55,7 @@ def snapshot(db, call, *, conversation=None, proposal_id=None):
     if proposal is not None and proposal.call_id != call.id:
         proposal = None
     previously_declined = any(e.kind == 'semantic_turn' and e.payload.get('followup') == 'decline_callback' and e.payload.get('source_event_id') != source_id for e in rows)
-    return {'call_id': call.id, 'customer_name': person.name, 'reply': reply, 'question': speech_text,
+    return {'call_purpose': call.purpose, 'call_id': call.id, 'customer_name': person.name, 'reply': reply, 'question': speech_text,
             'source_id': source_id, 'playback_id': playback_id,
             'proposal_id': proposal.id if proposal else '', 'fingerprint': proposal.fingerprint if proposal else '',
             'history': history, 'completed_agent_speech': speech_text,
@@ -81,13 +83,38 @@ def record_meaning(db, call, evidence):
                      'source_event_id': evidence.source_id, 'playback_event_id': evidence.playback_id,
                      'identity': meaning.identity, 'followup': meaning.followup, 'control': meaning.control,
                      'boundary_warning_grounded': grounded,
-                     'appointment': meaning.appointment, 'model': settings().managed_interpretation_model}))
+                     'appointment': meaning.appointment, 'disposition': meaning.disposition, 'model': settings().managed_interpretation_model}))
         db.flush()
+    if evidence.meaning.followup == 'urgent':
+        source = db.get(m.CallEvent, evidence.source_id)
+        if (call.purpose in {'engineering', 'campaign'} and source and source.call_id == call.id
+            and source.kind == 'user_utterance' and source.payload.get('source') == 'plivo_elevenlabs_observer'
+            and source.payload.get('speech_timing_verified') is True and source.payload.get('text', '').strip() == evidence.reply.strip()
+            and timedelta(0) <= now() - source.occurred_at <= timedelta(seconds=30)):
+            key = 'reported-urgent:' + source.id
+            if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.provider_event_id == key)):
+                svc.record_event(db, call.id, s.EventInput(provider_event_id=key, kind='urgent',
+                    occurred_at=source.occurred_at, payload={'source': 'server_semantic_turn', 'detail': evidence.reply[:1500]}))
+    disposition = evidence.meaning.disposition
+    if disposition != 'none' and (disposition == 'not_available' or call.identity_verified):
+        source = db.get(m.CallEvent, evidence.source_id)
+        if (call.purpose in {'engineering', 'campaign'} and source and source.call_id == call.id
+            and source.kind == 'user_utterance' and source.payload.get('source') == 'plivo_elevenlabs_observer'
+            and source.payload.get('speech_timing_verified') is True and source.payload.get('text', '').strip() == evidence.reply.strip()
+            and timedelta(0) <= now() - source.occurred_at <= timedelta(seconds=30)):
+            key = 'disposition:' + source.id
+            if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.provider_event_id == key)):
+                svc.record_event(db, call.id, s.EventInput(provider_event_id=key, kind=disposition,
+                    occurred_at=source.occurred_at, payload={'source': 'server_semantic_turn', 'utterance_event_id': source.id}))
+                if disposition != 'not_available':
+                    svc.stop_campaign(db, call)
 
 
 def apply_control(db, call, evidence):
     """Only trusted current caller data can stop or revoke access; no model write args."""
     if evidence.meaning is None or evidence.meaning.control == 'none':
+        return False
+    if evidence.meaning.control == 'voicemail' and call.purpose == 'campaign':
         return False
     if evidence.meaning.control in BOUNDARIES:
         reason = terminal_reason(db, call, evidence)
@@ -104,7 +131,7 @@ def apply_control(db, call, evidence):
     if not evidence.matches(call.id, person.name, evidence.reply):
         raise Rejected('interpretation_mismatch', 'The current reply needs a fresh interpretation')
     source = db.get(m.CallEvent, evidence.source_id)
-    if call.purpose == 'engineering' and (not source or source.call_id != call.id
+    if call.purpose in {'engineering', 'campaign'} and (not source or source.call_id != call.id
         or source.kind != 'user_utterance' or source.payload.get('source') != 'plivo_elevenlabs_observer'
         or source.payload.get('text', '').strip() != evidence.reply.strip()
         or not timedelta(0) <= now() - source.occurred_at <= timedelta(seconds=30)):
@@ -152,7 +179,7 @@ def prefetch(call_id, event_id):
         backstop = False
         with Session(engine()) as db:
             call = db.get(m.Call, call_id)
-            if (not call or call.purpose != 'engineering' or not settings().managed_phone_enabled):
+            if (not call or call.purpose not in {'engineering', 'campaign'} or not settings().managed_phone_enabled):
                 return
             source = db.get(m.CallEvent, event_id)
             if (not source or source.call_id != call_id or source.kind != 'user_utterance'
@@ -222,7 +249,7 @@ def prefetch_readback(call_id, event_id):
     try:
         with Session(engine()) as db:
             call, speech = db.get(m.Call, call_id), db.get(m.CallEvent, event_id)
-            if (not call or call.purpose != 'engineering' or call.state != 'in_progress'
+            if (not call or call.purpose not in {'engineering', 'campaign'} or call.state != 'in_progress'
                 or not settings().managed_phone_enabled or not speech or speech.call_id != call_id):
                 return
             completed = (speech.kind == 'agent_utterance'

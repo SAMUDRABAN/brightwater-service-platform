@@ -11,7 +11,7 @@ from brightwater.managed.understanding import Meaning, Understanding, snapshot_d
 def meaning(**changes):
     return Meaning(identity='unclear', identity_question=False, identity_question_quote='', identity_name_quote='', notice_complete=False,
         notice_quote='', followup='none', followup_basis='none', rescinds_callback_refusal=False,
-        control='none', boundary_warning_quote='', appointment='unclear', appointment_target='none', readback=None).model_copy(update=changes)
+        control='none', boundary_warning_quote='', disposition='none', appointment='unclear', appointment_target='none', readback=None).model_copy(update=changes)
 
 
 def bind(db, conv, **decisions):

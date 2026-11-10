@@ -577,6 +577,12 @@ function Quality() {
   );
 }
 async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
+  const campaign = await api<{
+    enabled: boolean;
+    due_customers: number;
+    landlords_due: number;
+    blockers: string[];
+  }>("/v1/campaign/status");
   const engineering = admin
     ? await api<{
         enabled: boolean;
@@ -617,6 +623,25 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
               <dd>Three attempts, at least a day apart</dd>
             </div>
           </dl>
+          <p>
+            <strong>{campaign.due_customers}</strong> customers due in the next 28 days, including{" "}
+            {campaign.landlords_due} landlords. The scheduler prioritises landlords and checks every
+            destination again before dialing.
+          </p>
+          {campaign.blockers.length > 0 && (
+            <div className="panel-body">
+              <strong>Before automatic calling</strong>
+              <ul>
+                {campaign.blockers.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="muted">
+            Uses the ElevenLabs caller. Tenant numbers are collected for access and are never
+            dialed.
+          </p>
           <form action={pauseCalling}>
             <button className="button secondary" type="submit">
               Pause new calls

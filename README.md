@@ -2,9 +2,13 @@
 
 A branded office CRM and outbound service-reminder candidate for **Brightwater Plumbing & Heating Ltd**, built for The Meraki Group assessment `TMG-TA-2611-01`.
 
-**Version 0.3.1 · engineering candidate.** Customer calling is paused. The office is deployed, 22 owner-attended engineering attempts are retained and four fictional bookings were saved. The physical tests used India; a UK route and six complete scenario-specific telephone artefacts remain qualification gates. This is not a claim of production readiness or full assessment completion.
+**Version 0.4.0 · engineering candidate.** Customer calling is paused. The office is deployed, 22 owner-attended engineering attempts are retained and four fictional bookings were saved. The physical tests used India; a UK route and six complete scenario-specific telephone artefacts remain qualification gates. This is not a claim of production readiness or full assessment completion.
 
 [Office login](https://office.46.101.11.137.sslip.io/login) · [Assessment coverage](docs/submission/assessment-coverage.md) · [Note to Mark](docs/submission/note-to-mark.md) · [Technical handover](docs/submission/written-summary.md)
+
+## Automatic reminders
+
+The server-side campaign now selects upcoming28-day reminders, prioritises landlords and dispatches through a separately gated native ElevenLabs UK route. Redis/Celery/Beat handle durable scheduling and retries; the active conversation keeps its direct tool/database path. The CRM Call controls page shows due counts and activation blockers. Customer calling is still paused until a real UK route/caller ID and office callback are qualified. The India route remains attended-test only; no new calls are authorised by this release. [Brief coverage and checks](docs/campaign-and-brief-coverage.md).
 
 ## What the office does
 

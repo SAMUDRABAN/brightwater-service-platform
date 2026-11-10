@@ -58,6 +58,7 @@ class TurnMeaning(Strict):
     rescinds_callback_refusal: bool
     control: Literal['none', 'stop_calling', 'recording_refused', 'wrong_number', 'speaker_changed', 'off_topic', 'harassment', 'automated_menu', 'voicemail']
     boundary_warning_quote: str = Field(description='Verbatim passage ONLY in completed_agent_speech that explicitly warns continued unrelated chat or targeted abuse will end this call. Empty for ordinary questions, general redirection, earlier history or interrupted speech.')
+    disposition: Literal['not_interested', 'serviced_elsewhere', 'not_available', 'none']
     appointment: Literal['confirm', 'decline', 'change', 'cancel', 'question', 'unclear']
     appointment_target: Literal['current', 'other', 'unclear', 'none'] = Field(description='Whether the instruction targets THIS current readback/arrangement, a DIFFERENT historical appointment, an unidentified appointment, or no appointment. Other/historical cancellations NEVER target current.')
 
@@ -76,8 +77,7 @@ is true only when the ACTUALLY COMPLETED agent speech asks whether the speaker i
 customer, not whether to book, hear details, get a callback or check availability. A proxy,
 relative, quotation, historical statement, uncertainty or denial never identifies this speaker.
 identity_name_quote is the verbatim PROPER NAME in the current caller reply, only if the speaker identifies THEMSELVES by that name as the intended customer. It is empty for proxy names, quoted names, "me", "speaking", pronouns and other unnamed assent. A generic yes without the relevant identity question is unclear. notice_complete is true only if
-completed_agent_speech itself discloses AI identity, recording and fictional engineering-test
-details; notice_quote must be its verbatim passage. Never derive notice from the caller or history. Do not infer identity from
+completed_agent_speech itself discloses automated/AI identity, Brightwater and recording; fictional engineering-test details are additionally required unless call_purpose=campaign; notice_quote must be its verbatim passage. Never derive notice from the caller or history. Do not infer identity from
 caller frustration, a booking request, or the fact the account has a name.
 Followup describes a genuine current caller request/report. Recognise everyday paraphrases for
 callbacks, quote interest, complaints and urgent/emergency problems. A question about callbacks,
@@ -110,6 +110,8 @@ A callback OFFER answered "that would be handy" is contextual, never explicit.
 "Do you usually phone everyone back?" is a question, followup=none, basis=none.
 "He said yes to that last time" reports another person/history, followup=none.
 "I want to book, why would I want a callback?" declines a callback; followup=decline_callback.
+Disposition describes only the current annual-service reminder outcome: not_interested when the named customer declines arranging the service; serviced_elsewhere when the named customer says the due work was already completed by another business; not_available when a third party says the named person cannot come to the phone. Otherwise none. A no to identity, a declined replacement quote/callback, declining one date while wanting another, a policy question, quotation or historical report is NOT not_interested. Do not confuse an unresolved repair with work already serviced elsewhere. A brief social aside does not change disposition. Lead can be contextual assent to a completed explicit replacement-quote offer; a priced service booking is not a lead.
+For call_purpose=campaign the recording notice needs automated/AI identity, Brightwater and recording disclosure; do not require a fictional test disclaimer. For engineering and other purposes require the fictional engineering-test notice too.
 These examples are DATA illustrating boundaries, not permission to ignore the rest of a reply."""
 
 
@@ -170,7 +172,7 @@ def interpret(snapshot, *, client=None, redis=None):
     """Short-lived singleflight by exact server context; cache is not action authority."""
     fields, digest = _fields(snapshot), snapshot_digest(snapshot)
     model = settings().managed_interpretation_model
-    cache_key = 'managed:meaning:v8:' + model + ':' + digest
+    cache_key = 'managed:meaning:v9:' + model + ':' + digest
     def unavailable():
         return Understanding(**fields, digest=digest, meaning=None)
     def cached():
@@ -213,6 +215,7 @@ def interpret(snapshot, *, client=None, redis=None):
                 pass
         data = {k: snapshot[k] for k in ('customer_name', 'reply', 'question', 'history',
                 'completed_agent_speech', 'callback_previously_declined', 'extract_readback')}
+        data['call_purpose'] = snapshot.get('call_purpose', 'engineering')
         data['reference_uk_date'] = now().astimezone(UK).date().isoformat()
         data['extract_readback'] = False
         schema = TurnMeaning.model_json_schema()

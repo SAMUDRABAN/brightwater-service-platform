@@ -19,6 +19,7 @@ parser.add_argument("--api-url", required=True)
 parser.add_argument("--phone", action="store_true", help="Create the separate Plivo phone profile; does not dial or import a number")
 parser.add_argument("--quality-state", type=Path, help="Private native-test and pronunciation resource state")
 parser.add_argument("--profile", choices=["baseline", "balanced", "fast"], default="balanced")
+parser.add_argument("--campaign", action="store_true", help="Separate UK customer profile; does not enable dialing")
 args = parser.parse_args()
 quality = json.loads(args.quality_state.read_text()) if args.quality_state and args.quality_state.exists() else {}
 state = json.loads(args.state.read_text()) if args.state.exists() else {}
@@ -45,10 +46,14 @@ with httpx.Client(base_url="https://api.elevenlabs.io", headers={"xi-api-key": k
         args.state.write_text(json.dumps(state, indent=2))
         os.chmod(args.state, 0o600)
     resources = {"dictionary": quality.get("dictionary"), **quality.get("agents", {}).get(state.get("agent_id"), {})}
-    body = config(state["knowledge_id"], args.api_url.rstrip("/"), state["provider_secret_id"], phone=args.phone, quality=resources, profile=args.profile)
+    body = config(state["knowledge_id"], args.api_url.rstrip("/"), state["provider_secret_id"], phone=args.phone, quality=resources, profile=args.profile, campaign=args.campaign)
     prompt = body["conversation_config"]["agent"]["prompt"]
-    prompt["tool_ids"] = retain_tools(client, actual_before, [t for t in prompt["tools"] if t["type"] == "webhook"])
-    prompt["tools"] = [t for t in prompt["tools"] if t["type"] != "webhook"]
+    if actual_before:
+        prompt["tool_ids"] = retain_tools(client, actual_before, [t for t in prompt["tools"] if t["type"] == "webhook"])
+        prompt["built_in_tools"] = dict(actual_before["conversation_config"]["agent"]["prompt"].get("built_in_tools") or {})
+        prompt["built_in_tools"]["end_call"] = next(t for t in prompt["tools"] if t["type"] == "system")
+        del prompt["tools"]  # The API forbids tools and tool_ids in one request.
+
     if state.get("selected_voice_id"):
         body["conversation_config"]["tts"]["voice_id"] = state["selected_voice_id"]
     if state.get("agent_id"):
@@ -59,7 +64,7 @@ with httpx.Client(base_url="https://api.elevenlabs.io", headers={"xi-api-key": k
         # Config contains only public facts; validation response may be inspected.
         print("Provider configuration rejected", response.status_code, response.text[:3000])
         raise SystemExit(1)
-    state.update(agent_id=state.get("agent_id") or response.json()["agent_id"], stage="connected_candidate", phone_attached=False, phone_profile=args.phone, quality_profile=args.profile,
+    state.update(agent_id=state.get("agent_id") or response.json()["agent_id"], stage="connected_candidate", phone_attached=False, phone_profile=args.phone, campaign_profile=args.campaign, quality_profile=args.profile,
                  config_sha256=hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest())
     args.state.write_text(json.dumps(state, indent=2))
     os.chmod(args.state, 0o600)

@@ -104,7 +104,7 @@ class Conversation:
             svc.control_lock(db)
         call = db.scalar(select(m.Call).where(m.Call.id == self.call_id).with_for_update())
         max_age = ATTENDED_SESSION_TTL_SECONDS if self.trusted_phone else 240
-        if not call or call.purpose != ("engineering" if self.trusted_phone else "managed_evaluation") or call.state != "in_progress" or call.created_at < now() - timedelta(seconds=max_age):
+        if not call or call.purpose not in ({"engineering", "campaign"} if self.trusted_phone else {"managed_evaluation"}) or call.state != "in_progress" or call.created_at < now() - timedelta(seconds=max_age):
             raise Rejected("managed_closed", "Evaluation session is absent, expired or closed", 403)
         utterance = self.latest_user()
         text = utterance["text"] if utterance else ""
@@ -125,6 +125,9 @@ class Conversation:
                 if self.understanding.meaning.control in BOUNDARIES:
                     return stopped_message(self.understanding.meaning.control)
                 return {"stopped": True, "instruction": "The caller's stop/privacy request was saved. Close politely without account disclosure or further persuasion."}
+        if (self.understanding and self.understanding.meaning.disposition != "none"
+            and name not in {"finish_conversation", "record_followup"}):
+            raise Rejected("intent_decline", "Respect the current decision. Do not offer dates or ask for another yes; close politely after recording the outcome.")
         # Independent safety fast paths remain; they are not the exclusive
         # vocabulary accepted by the managed semantic path.
         if explicit_opt_out(text) or explicit_recording_refusal(text):
@@ -158,7 +161,7 @@ class Conversation:
         elif name == "check_availability":
             body = s.AvailabilityInput.model_validate(args)
             result = svc.availability(db, call, body.items, preferred_day=body.preferred_day,
-                preferred_period=body.preferred_period, engineer_id=body.engineer_id, after_day=body.after_day)
+                preferred_period=body.preferred_period, engineer_id=body.engineer_id, after_day=body.after_day, same_day=body.same_day)
             # Actual engineer identity is a business fact; internal capacity counters stay private.
             result = {**result, "options": [{"offer_id": o["offer_id"], "reserved": False,
                 "items": [{k: v for k, v in i.items() if k in {"property_id", "service", "day", "period", "engineer_id", "engineer_name", "engineer_requested"}} for i in o["items"]]} for o in result["options"]],
@@ -174,9 +177,17 @@ class Conversation:
             self.readbacks[proposal.id] = {"text": readback, "turn_index": len(self.turns)}
             postcodes = [match.group(0) for item in proposal.items
                          if (match := re.search(r"[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", item["address"]))]
+            account = svc.account(db, call)
+            eligible = any(p["replacement_quote_eligible"] for p in account["properties"] if p["id"] in {i["property_id"] for i in proposal.items})
+            offered = db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id,
+                m.CallEvent.kind.in_(["replacement_quote_offered", "lead"])).limit(1))
+            quote_offer = bool(eligible and not offered)
+            if quote_offer:
+                self.event(db, call, "replacement_quote_offered", {"source": "verified_account_age", "proposal_id": proposal.id})
             result = {"proposal_id": proposal.id, "readback": readback, "confirmed": False,
+                      "optional_quote_offer": quote_offer,
                       "arrangement": current(db, call), "required_postcodes": postcodes,
-                      "instruction": "Explain every returned fact including the full address and postcode, date, window, total price, VAT and payment. Natural wording is welcome. Ask whether to save it and wait for the reply; no special consent phrase is required."}
+                      "instruction": ("Before the full booking readback, offer ONE optional replacement-quote enquiry and WAIT if the caller has not declined extras or asked to proceed directly. Record actual interest as lead, no replacement price. Then give the full current booking readback and await fresh booking authorisation. " if quote_offer else "") + "Explain every returned fact including the full address and postcode, date, window, total price, VAT and payment. Natural wording is welcome. Ask whether to save it and wait for the reply; no special consent phrase is required."}
         elif name == "confirm_booking":
             if self.intent is not None:
                 self.event(db, call, "booking_intent", {"decision": self.intent.decision,
@@ -205,6 +216,12 @@ class Conversation:
             if not self.followup_requested(text, kind):
                 result = {"saved": False, "instruction": "No explicit request found. This is not a system error. Do not claim a request was recorded. Preserve the caller's booking goal."}
             else:
+                existing = db.scalar(select(m.Followup).where(m.Followup.call_id == call.id,
+                    m.Followup.kind == kind, m.Followup.detail == text[:1500]).limit(1))
+                if existing:
+                    result = {"saved": True, "request_id": existing.id, "instruction": "The reported issue is already in the office queue. Do not duplicate it or promise a response time. Close briefly when appropriate."}
+                    self.results[tool_id] = result
+                    return result
                 key = f"followup:{kind}:{self.turns.index(utterance)}"
                 if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.provider_event_id == key)):
                     event = self.event(db, call, kind, {"detail": text}, key)
@@ -217,13 +234,16 @@ class Conversation:
                 result = {"saved": True, "request_id": event.id if event else key, "instruction": "Request recorded only. No live transfer, notification or callback-time guarantee."}
         elif name == "finish_conversation":
             from brightwater.managed.boundaries import BOUNDARIES, business_request
+            if call.purpose == "campaign" and self.understanding and self.understanding.meaning.control == "voicemail":
+                from brightwater.campaign import voicemail_result
+                return voicemail_result(db, call, self.understanding)
             if self.understanding and self.understanding.meaning and self.understanding.meaning.control in BOUNDARIES:
                 if business_request(self.understanding.meaning):
                     return {'finished': False, 'instruction': 'Continue the genuine enquiry, follow-up or arrangement request. Give emergency advice immediately where needed; do not issue a conduct warning or terminate for frustration.'}
                 if self.understanding.meaning.control in {'automated_menu', 'voicemail'}:
                     return {'finished': False, 'instruction': 'Automation evidence is uncertain or not current. Do not disclose account details, press keys or issue a conduct warning. Clarify once whether a person can speak; do not enter a repeated automated dialogue.'}
                 return {"finished": False, "instruction": "Do not end this call yet. Your next spoken reply MUST briefly explain the Brightwater purpose AND explicitly say that continuing unrelated or personal remarks will end this call. A generic offer to help without that conditional warning is insufficient. Resume any genuine enquiry, complaint or booking. Swearing about service is not abuse."}
-            svc.finalise(db, call, "Managed attended engineering phone conversation completed; outcome derives from saved database facts." if self.trusted_phone else "Managed engineering evaluation completed. Business outcome derives from saved database facts; no phone call was made.")
+            svc.finalise(db, call, ("Customer reminder conversation completed; outcome derives from saved database facts." if call.purpose == "campaign" else "Managed attended engineering phone conversation completed; outcome derives from saved database facts.") if self.trusted_phone else "Managed engineering evaluation completed. Business outcome derives from saved database facts; no phone call was made.")
             self.closed = True
             result = {"finished": True, "outcome": call.outcome}
         else:

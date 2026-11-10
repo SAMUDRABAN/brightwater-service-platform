@@ -43,9 +43,9 @@ def broker():
     return Redis.from_url(settings().redis_url.get_secret_value(), socket_timeout=2, decode_responses=True)
 
 
-def enabled():
+def enabled(*, phone=False):
     cfg = settings()
-    if not cfg.managed_enabled or not cfg.managed_agent_id or not cfg.managed_api_key.get_secret_value() or len(cfg.managed_webhook_secret.get_secret_value()) < 32:
+    if not cfg.managed_enabled or not (phone or cfg.managed_agent_id) or not cfg.managed_api_key.get_secret_value() or len(cfg.managed_webhook_secret.get_secret_value()) < 32:
         raise Rejected("managed_disabled", "Managed candidate is not configured", 503)
     return cfg
 
@@ -63,7 +63,7 @@ def reap_closed_phone_lease(redis):
         return
     with Session(office_engine()) as db:
         call = db.get(m.Call, state.get("id"))
-        if call and call.purpose == "engineering" and call.state in {"finished", "failed"}:
+        if call and call.purpose in {"engineering", "campaign"} and call.state in {"finished", "failed"}:
             release_lease(redis, digest)
 
 
@@ -98,7 +98,7 @@ def conversation_from_history(call_id, text_only, raw, state):
 
 def closed_result(db, call_id, *, phone=False):
     call = db.get(m.Call, call_id)
-    if call and call.purpose == ("engineering" if phone else "managed_evaluation") and call.state in {"finished", "failed"}:
+    if call and call.purpose in ({"engineering", "campaign"} if phone else {"managed_evaluation"}) and call.state in {"finished", "failed"}:
         return {"finished": True, "outcome": call.outcome,
                 "confirmed": bool(db.scalar(select(m.Booking.id).where(m.Booking.call_id == call.id, m.Booking.state == "confirmed"))),
                 "instruction": "This session is complete. Its saved outcome remains valid. Do not reopen booking or claim a saved booking failed. Call end_call now."}
@@ -187,14 +187,29 @@ def install(app, operator, scoped_call):
     @app.post("/runtime/managed/session")
     def phone_session(call: Annotated[m.Call, Depends(scoped_call)],
                       x_brightwater_runtime: Annotated[str | None, Header()] = None):
-        cfg = enabled()
+        cfg = enabled(phone=True)
         if not x_brightwater_runtime or not secrets.compare_digest(x_brightwater_runtime, cfg.runtime_token.get_secret_value()):
             raise Rejected("unauthorised", "Trusted gateway authentication required", 401)
-        if not cfg.managed_phone_enabled or not cfg.managed_phone_agent_id or call.purpose != "engineering":
+        campaign = call.purpose == "campaign"
+        agent_id = cfg.managed_campaign_agent_id if campaign else cfg.managed_phone_agent_id
+        if (call.purpose not in {"engineering", "campaign"} or not agent_id
+            or not campaign and not cfg.managed_phone_enabled):
             raise Rejected("managed_phone_disabled", "The managed phone adapter is not enabled for this call", 403)
+        if campaign:
+            from brightwater.campaign import configuration_issues
+            if not cfg.dialing_enabled or configuration_issues(cfg):
+                raise Rejected("campaign_disabled", "Customer campaign is not qualified", 403)
         with Session(office_engine()) as db:
             destination = db.get(m.Destination, call.destination_id)
-            if not destination or destination.phone != cfg.engineering_recipient.get_secret_value() or not destination.enabled:
+            if not destination or not destination.enabled:
+                raise Rejected("managed_phone_destination", "The carrier call must use an approved destination", 403)
+            if campaign:
+                from brightwater.policy import uk_phone
+                uk_phone(destination.phone)
+                from brightwater.services import suppressed
+                if suppressed(db, call.customer_id, destination.phone):
+                    raise Rejected("suppressed", "The destination opted out", 403)
+            elif destination.phone != cfg.engineering_recipient.get_secret_value():
                 raise Rejected("managed_phone_destination", "The carrier call must use the owned engineering destination", 403)
             name = db.get(m.Customer, call.customer_id).name
         token = secrets.token_urlsafe(40)
@@ -206,12 +221,12 @@ def install(app, operator, scoped_call):
         try:
             from brightwater.managed.startup import consume
             url_started = time.perf_counter()
-            signed_url = consume(redis, call.id, cfg)
+            signed_url = consume(redis, call.id, cfg, agent_id=agent_id)
             prepared = signed_url is not None
             if signed_url is None:
                 with httpx.Client(timeout=15) as client:
                     response = client.get("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
-                        headers={"xi-api-key": cfg.managed_api_key.get_secret_value()}, params={"agent_id": cfg.managed_phone_agent_id})
+                        headers={"xi-api-key": cfg.managed_api_key.get_secret_value()}, params={"agent_id": agent_id})
                     response.raise_for_status()
                     signed_url = response.json()["signed_url"]
             try:
@@ -224,7 +239,7 @@ def install(app, operator, scoped_call):
             redis.setex("managed:cap:" + digest, ATTENDED_SESSION_TTL_SECONDS, json.dumps({"id": call.id, "storage": "phone",
                 "text_only": False, "conversation_id": None, "readbacks": {}}))
             return {"token": token, "signed_url": signed_url, "customer_name": name,
-                    "agent_id": cfg.managed_phone_agent_id}
+                    "agent_id": agent_id}
         except Exception:
             release_lease(redis, digest)
             raise

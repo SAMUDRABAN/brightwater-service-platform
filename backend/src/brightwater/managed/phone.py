@@ -114,7 +114,7 @@ def identity(db, call, text, *, understanding=None):
     if not identity_evidence_valid(db, call, source, expected, understanding):
         if understanding is not None and not notice_delivered(db, call, source, understanding):
             return {"verified": False, "reason": "notice_incomplete",
-                "instruction": "The current speaker has not heard the complete notice. Briefly explain you are Brightwater's AI assistant on a recorded engineering test with fictional details, then naturally check you are speaking with the intended customer. Do not disclose account details or blame their wording."}
+                "instruction": ("The current speaker has not heard the notice. Explain you are Brightwater Plumbing and Heating’s automated assistant and the call is recorded, then naturally check the intended customer. Do not disclose account details." if call.purpose == "campaign" else "The current speaker has not heard the complete notice. Briefly explain you are Brightwater's AI assistant on a recorded engineering test with fictional details, then naturally check you are speaking with the intended customer. Do not disclose account details or blame their wording.")}
         return {"verified": False, "instruction": "Identity is not yet verified. Clarify who is speaking once in natural language. Do not disclose the account or invent a callback."}
     svc.record_event(db, call.id, s.EventInput(provider_event_id="managed-identity:" + source.id,
         kind="identity_assertion", occurred_at=now(), payload={"utterance_event_id": source.id}),
@@ -148,7 +148,7 @@ def commit(db, call, proposal_id, text, *, consent=None, understanding=None):
         raise Rejected("confirmation_superseded", "The reply must answer the current completed readback")
     booking = svc.commit(db, call.id, proposal.id, source.id, consent=consent)
     return {"confirmed": True, "booking_id": booking.id, "total_pence": booking.total_pence,
-            "purpose": "engineering", "evidence_contract": "carrier_playout_and_original_speech",
+            "purpose": call.purpose, "evidence_contract": "carrier_playout_and_original_speech",
             "close_with_native_end_call": True,
             "instruction": "The booking is saved. Briefly confirm it and payment to the engineer, then use native end_call. Do not call finish_conversation first: the authenticated carrier end event finalises this phone record."}
 
@@ -163,7 +163,7 @@ def wait_for_caller(db_factory, call_id, text, timeout=1.5):
     while True:
         with db_factory() as db:
             call = db.get(m.Call, call_id)
-            if not call or call.purpose != "engineering" or call.state != "in_progress":
+            if not call or call.purpose not in {"engineering", "campaign"} or call.state != "in_progress":
                 return False
             try:
                 caller_evidence(db, call, text)

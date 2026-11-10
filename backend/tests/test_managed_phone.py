@@ -67,6 +67,7 @@ def test_channel_restriction_does_not_blame_customer_or_request_another_yes():
 def test_managed_phone_reserves_with_real_policy_guard_and_exact_owner_reply():
     with session() as db, db.begin():
         call, conv, prepared = phone(db)
+        db.get(m.Property, "BW-1041-P1").boiler_year = 2020
         readback_at = now() - timedelta(seconds=2)
         event(db, call, "agent_utterance", readback_at, source="plivo_elevenlabs_observer",
               text=prepared["readback"], playback_completed=True, interrupted=False)
@@ -93,6 +94,7 @@ def test_managed_phone_reserves_with_real_policy_guard_and_exact_owner_reply():
 def test_phone_booking_never_bypasses_original_speech_and_playout(failure):
     with session() as db, db.begin():
         call, conv, prepared = phone(db)
+        db.get(m.Property, "BW-1041-P1").boiler_year = 2020
         readback_at = now() - timedelta(seconds=2)
         readback = prepared["readback"].replace(", PO4 0JT", "") if failure == "no_postcode" else prepared["readback"]
         event(db, call, "agent_utterance", readback_at, source="plivo_elevenlabs_observer", text=readback,

@@ -32,15 +32,16 @@ def valid_url(value, agent_id):
             and authenticated)
 
 
-def consume(redis, call_id, cfg):
+def consume(redis, call_id, cfg, *, agent_id=None):
+    agent_id = agent_id or cfg.managed_phone_agent_id
     try:
         raw = redis.getdel("managed:prepared-phone:" + call_id)
         if not raw:
             return None
         value = json.loads(Fernet(cfg.media_encryption_key.get_secret_value().encode()).decrypt(raw))
-        if (value["call_id"] == call_id and value["agent_id"] == cfg.managed_phone_agent_id
+        if (value["call_id"] == call_id and value["agent_id"] == agent_id
                 and 0 <= time.time() - value["created_at"] < TTL_SECONDS
-                and valid_url(value["signed_url"], cfg.managed_phone_agent_id)):
+                and valid_url(value["signed_url"], agent_id)):
             return value["signed_url"]
     except Exception:
         pass
@@ -50,28 +51,31 @@ def consume(redis, call_id, cfg):
 async def prepare(call_id):
     """Best-effort background preparation after the sole carrier POST succeeded."""
     cfg = settings()
-    if not (cfg.managed_enabled and cfg.managed_phone_enabled and cfg.managed_phone_agent_id
+    if not (cfg.managed_enabled and (cfg.managed_campaign_agent_id or cfg.managed_phone_enabled and cfg.managed_phone_agent_id)
             and cfg.media_encryption_key.get_secret_value()):
         return
     try:
         with Session(engine()) as db:
             call = db.get(m.Call, call_id)
-            if not call or call.purpose != "engineering" or call.state not in {"dispatching", "in_progress"}:
+            if not call or call.purpose not in {"engineering", "campaign"} or call.state not in {"dispatching", "in_progress"}:
                 return
+        agent_id = cfg.managed_campaign_agent_id if call.purpose == "campaign" else cfg.managed_phone_agent_id
+        if not agent_id:
+            return
         started = time.perf_counter()
         async with httpx.AsyncClient(timeout=5, follow_redirects=False) as client:
             response = await client.get("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
                 headers={"xi-api-key": cfg.managed_api_key.get_secret_value()},
-                params={"agent_id": cfg.managed_phone_agent_id})
+                params={"agent_id": agent_id})
             response.raise_for_status()
         url = response.json()["signed_url"]
-        if not valid_url(url, cfg.managed_phone_agent_id):
+        if not valid_url(url, agent_id):
             return
         with Session(engine()) as db:
             call = db.get(m.Call, call_id)
             if not call or call.state not in {"dispatching", "in_progress"}:
                 return
-        value = {"call_id": call_id, "agent_id": cfg.managed_phone_agent_id,
+        value = {"call_id": call_id, "agent_id": agent_id,
                  "created_at": time.time(), "signed_url": url}
         from brightwater.managed.gateway import broker
         encrypted = Fernet(cfg.media_encryption_key.get_secret_value().encode()).encrypt(json.dumps(value).encode())

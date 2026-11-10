@@ -21,7 +21,7 @@ CUSTOMERS = [
         ("14 Marmion Road, PO5 2BA", "Glow-worm", 2016, "service", "2026-12-08")]),
     ("BW-1112", "Kerry Walsh", "landlord", "07700 900809", None, "Usually combined £145 package.", [
         ("63 Kirby Road, PO2 0PE", "Vaillant", 2017, "combined", "2026-12-15")]),
-    ("BW-1120", "Sanjay Mehta", "homeowner", "07700 900823", None, "Ageing boiler: one optional quote-interest question after booking.", [
+    ("BW-1120", "Sanjay Mehta", "homeowner", "07700 900823", None, "Ageing boiler: one optional quote-interest question before the final booking readback.", [
         ("6 Highland Road, PO4 9DB", "Worcester Bosch", 2009, "service", "2026-12-10")]),
 ]
 

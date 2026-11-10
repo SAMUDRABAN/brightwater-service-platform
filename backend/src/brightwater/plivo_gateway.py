@@ -44,9 +44,10 @@ class GatewaySettings(BaseSettings):
     plivo_auth_id: SecretStr
     plivo_auth_token: SecretStr
     plivo_from_number: SecretStr
-    engineering_recipient: SecretStr
+    engineering_recipient: SecretStr = SecretStr("")
     gateway_country: str = "IN"
     gateway_enabled: bool = False
+    gateway_campaign_enabled: bool = False
     gateway_diagnostic_hold: bool = False
     gateway_stream_auth_mode: Literal["plivo_v3_and_token", "answer_bound_token"] = "plivo_v3_and_token"
     api_url: str
@@ -76,10 +77,19 @@ class GatewaySettings(BaseSettings):
         if len(self.gateway_token.get_secret_value()) < 32 or len(self.runtime_token.get_secret_value()) < 32:
             raise ValueError("Independent strong gateway/runtime credentials required")
         Fernet(self.gateway_state_key.get_secret_value().encode())
-        if self.gateway_country != "IN" or not self.plivo_from_number.get_secret_value().startswith("+91"):
-            raise ValueError("This attended engineering deployment must use its verified India route")
-        if not self.engineering_recipient.get_secret_value().startswith("+91"):
-            raise ValueError("Configure exactly one privately consented Indian recipient")
+        if self.gateway_country == "IN":
+            if not self.plivo_from_number.get_secret_value().startswith("+91") or not self.engineering_recipient.get_secret_value().startswith("+91") or self.gateway_campaign_enabled:
+                raise ValueError("India is an engineering-only route with one privately consented recipient")
+        elif self.gateway_country == "GB":
+            from brightwater.policy import Rejected, uk_phone
+            try:
+                uk_phone(self.plivo_from_number.get_secret_value())
+            except Rejected:
+                raise ValueError("Configure an approved real UK caller ID") from None
+            if self.voice_backend != "elevenlabs":
+                raise ValueError("Customer campaigns require the native ElevenLabs pipeline")
+        else:
+            raise ValueError("Unsupported carrier country")
         from brightwater.voice_pipeline import DirectVoiceOptions
         if self.voice_backend == "cascaded":
             DirectVoiceOptions.from_settings(self)
@@ -317,7 +327,26 @@ def create_app(cfg):
     async def outbound(body: Outbound, authorization: str | None = Header(default=None)):
         if not authorization or not secrets.compare_digest(authorization, "Bearer " + cfg.gateway_token.get_secret_value()):
             raise HTTPException(401)
-        if not cfg.gateway_enabled or body.purpose != "engineering" or body.phone.get_secret_value() != cfg.engineering_recipient.get_secret_value():
+        if not cfg.gateway_enabled:
+            raise HTTPException(403)
+        if body.purpose == "engineering":
+            if cfg.gateway_country != "IN" or body.phone.get_secret_value() != cfg.engineering_recipient.get_secret_value():
+                raise HTTPException(403)
+        elif body.purpose == "campaign":
+            if cfg.gateway_country != "GB" or not cfg.gateway_campaign_enabled or body.max_seconds > 900:
+                raise HTTPException(403)
+            from brightwater.policy import Rejected, uk_phone
+            try:
+                uk_phone(body.phone.get_secret_value())
+            except Rejected:
+                raise HTTPException(403) from None
+            async with httpx.AsyncClient(timeout=5, follow_redirects=False) as client:
+                approved = await client.post(cfg.api_url.rstrip("/") + "/internal/campaign/admission",
+                    headers={"Authorization": "Bearer " + cfg.runtime_token.get_secret_value()},
+                    json={"call_id": body.call_id, "session_token": body.session_token.get_secret_value(), "phone": body.phone.get_secret_value()})
+                if approved.status_code != 200 or approved.json().get("admitted") is not True or approved.json().get("call_id") != body.call_id:
+                    raise HTTPException(403)
+        else:
             raise HTTPException(403)
         # Durable single-call claim; never repeat a possibly accepted carrier POST.
         old = await app.state.redis.get("voice:admission:" + body.call_id)
@@ -331,7 +360,7 @@ def create_app(cfg):
             raise HTTPException(409, "Another call is active or uncertain")
         if not await app.state.redis.set("voice:admission:" + body.call_id, sid, nx=True, ex=86400):
             raise HTTPException(409)
-        context = {"sid": sid, "call_id": body.call_id, "phone": body.phone.get_secret_value(),
+        context = {"sid": sid, "call_id": body.call_id, "purpose": body.purpose, "phone": body.phone.get_secret_value(),
             "session_token": body.session_token.get_secret_value(), "max_seconds": body.max_seconds,
             "created": time.time(), "status": "initiating"}
         await app.state.store.put(sid, context)

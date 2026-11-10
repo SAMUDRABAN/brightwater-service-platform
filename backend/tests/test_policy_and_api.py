@@ -24,9 +24,11 @@ from brightwater.policy import (
 @pytest.mark.parametrize("at,preference,expected", [
     ("2026-11-05T09:59:00+00:00", None, False),
     ("2026-11-05T10:00:00+00:00", None, True),
-    ("2026-11-05T19:25:00+00:00", None, False),
+    ("2026-11-05T19:25:00+00:00", None, True),
+    ("2026-11-05T19:30:00+00:00", None, False),
     ("2026-11-07T12:54:00+00:00", None, True),
-    ("2026-11-07T12:55:00+00:00", None, False),
+    ("2026-11-07T12:55:00+00:00", None, True),
+    ("2026-11-07T13:00:00+00:00", None, False),
     ("2026-11-08T12:00:00+00:00", None, False),
     ("2026-11-05T11:59:00+00:00", time(12), False),
     ("2026-07-06T09:00:00+00:00", None, True),  # 10:00 BST, not fixed UTC

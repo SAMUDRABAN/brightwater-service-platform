@@ -229,6 +229,12 @@ def call_detail(call_id: str, db: DB):
             "arrangement": current(db, value)}
 
 
+@app.get("/v1/campaign/status", dependencies=OPERATOR)
+def campaign_status(db: DB):
+    from brightwater.campaign import status
+    return status(db, settings())
+
+
 @app.get("/v1/dashboard", dependencies=OPERATOR)
 def dashboard(request: Request, db: DB):
     today = now().astimezone(UK).date()
@@ -281,6 +287,26 @@ def events(call_id: str, body: s.EventInput, db: DB, background_tasks: Backgroun
     return {"event_id": value.id}
 
 
+@app.post("/internal/campaign/admission", dependencies=RUNTIME)
+def campaign_admission(body: s.CampaignAdmission, db: DB):
+    from brightwater.campaign import configuration_issues
+    cfg = settings()
+    svc.control_lock(db)
+    call = db.scalar(select(m.Call).where(m.Call.id == body.call_id).with_for_update())
+    control = db.get(m.Control, "dialing")
+    digest = hashlib.sha256(body.session_token.get_secret_value().encode()).hexdigest()
+    if (not cfg.dialing_enabled or configuration_issues(cfg) or not control or not control.enabled
+        or not call or call.purpose != "campaign" or call.state != "dispatching"
+        or not call.session_token_hash or not secrets.compare_digest(call.session_token_hash, digest)
+        or not call.dispatched_at or not timedelta(0) <= now() - call.dispatched_at <= timedelta(seconds=60)):
+        raise Rejected("campaign_not_admitted", "No current approved campaign admission", 403)
+    destination = db.get(m.Destination, call.destination_id)
+    if not destination or destination.phone != body.phone.get_secret_value():
+        raise Rejected("destination_mismatch", "The carrier destination must match the approved call", 403)
+    svc.check_dial_policy(db, svc.customer(db, call.customer_id), destination, now(), exclude_call=call.id)
+    return {"admitted": True, "purpose": "campaign", "call_id": call.id}
+
+
 @app.get("/runtime/context")
 def context(call: CALL, db: DB):
     return {"customer_display_name": svc.customer(db, call.customer_id).name,
@@ -306,7 +332,7 @@ def knowledge(call: CALL, query: str = Query(min_length=1, max_length=400)):
 
 @app.post("/runtime/availability")
 def availability(body: s.AvailabilityInput, call: CALL, db: DB):
-    return svc.availability(db, call, body.items, preferred_day=body.preferred_day, preferred_period=body.preferred_period, engineer_id=body.engineer_id, after_day=body.after_day)
+    return svc.availability(db, call, body.items, preferred_day=body.preferred_day, preferred_period=body.preferred_period, engineer_id=body.engineer_id, after_day=body.after_day, same_day=body.same_day)
 
 
 @app.post("/runtime/bookings/prepare")

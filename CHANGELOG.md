@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0] - 2026-11-10
+
+- Route automatic 28-day reminders to a separately gated native ElevenLabs UK campaign, removing the legacy LiveKit dispatch path. Keep India attended tests isolated.
+- Add approved-destination admission, landlord priority, bounded queue lookahead, daily call cap, exact UK calling hours and campaign readiness shown in the CRM.
+- Complete brief behaviours: semantic refusal/serviced-elsewhere/unavailable outcomes, one approved campaign voicemail, urgent-first unresolved handover, evening-before text notice and one optional ageing-boiler quote enquiry.
+- Allow agreed separate-day landlord visits in one correctly priced proposal. Retain diary capacity, qualification and original-speech consent guards.
+- Preserve Valory, model, ASR and turn/interrupt settings. Customer campaigns remain paused pending real UK carrier/caller-ID/callback qualification; no new physical calls are made by this release.
+
 ## [0.3.1] - 2026-11-10
 
 - Derive the automatic call-end summary from the actual saved booking, preventing a contradictory “no arrangement” summary beside a confirmed reservation. Preserve specific staff/provider summaries.

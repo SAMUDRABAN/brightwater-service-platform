@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     operator_token: SecretStr
     runtime_token: SecretStr
     dialing_enabled: bool = False
+    campaign_gateway_url: str = ""
+    campaign_gateway_token: SecretStr = SecretStr("")
+    campaign_route_verified: bool = False
+    campaign_daily_limit: int = Field(default=20, ge=1, le=20)
+    managed_campaign_agent_id: str = ""
     max_active_calls: int = Field(default=1, ge=1, le=20)
     livekit_url: str = ""
     livekit_api_key: SecretStr = SecretStr("")
@@ -54,6 +59,7 @@ class Settings(BaseSettings):
     managed_webhook_secret: SecretStr = SecretStr("")
     managed_database_url: SecretStr = SecretStr("")
     release_id: str = "development"
+    replacement_quote_age_years: int = Field(default=15, ge=1, le=50)
     proposal_ttl_seconds: int = 120
     media_root: Path = Path("/tmp/brightwater-media")
     media_encryption_key: SecretStr = SecretStr("")
@@ -67,18 +73,11 @@ class Settings(BaseSettings):
             raise ValueError("Operator and runtime credentials must be distinct")
         if self.environment in {"shadow", "showcase", "test"} and self.dialing_enabled:
             raise ValueError(f"Dialing is forbidden in {self.environment}")
-        if self.dialing_enabled and not all(
-            [self.livekit_url, self.livekit_api_key.get_secret_value(),
-             self.livekit_api_secret.get_secret_value(), self.livekit_outbound_trunk_id]
-        ):
-            raise ValueError("Dialing requires a configured LiveKit/Plivo SIP route")
-        if self.dialing_enabled and not all([self.voice_stt_model, self.voice_llm_model,
-                                              self.voice_tts_model, self.voice_id, self.recording_notice]):
-            raise ValueError("Select and configure the voice pipeline and accurate recording notice first")
-        if self.dialing_enabled and self.voice_pipeline == "direct" and not all([
-            self.openai_api_key.get_secret_value(), self.elevenlabs_api_key.get_secret_value()
-        ]):
-            raise ValueError("Direct voice requires OpenAI and ElevenLabs credentials")
+        if self.dialing_enabled:
+            from brightwater.campaign import configuration_issues
+            issues = configuration_issues(self)
+            if issues:
+                raise ValueError("Customer campaign is not ready: " + "; ".join(issues))
         if self.media_encryption_key.get_secret_value():
             from cryptography.fernet import Fernet
             try:

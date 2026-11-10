@@ -12,7 +12,7 @@ from brightwater import models as m
 from brightwater import services as svc
 from brightwater.config import settings
 from brightwater.db import session
-from brightwater.policy import UK, Rejected, now
+from brightwater.policy import Rejected, now
 from brightwater.providers import initiate
 
 cfg = settings()
@@ -42,20 +42,9 @@ def tick():
         at = now()
         control = db.get(m.Control, "dialing")
         if cfg.dialing_enabled and control and control.enabled:
-            due = db.scalars(select(m.Customer).join(m.Property).join(m.Obligation).where(
-                m.Customer.id != "ENGINEERING-SAMUDRA",
-                m.Obligation.resolved.is_(False),
-                m.Obligation.due_date <= at.astimezone(UK).date() + timedelta(days=28)).distinct()).all()
-            for customer in due:
-                contact = db.scalar(select(m.CampaignContact).where(m.CampaignContact.customer_id == customer.id,
-                                                                   m.CampaignContact.year == at.astimezone(UK).year))
-                if contact and contact.next_attempt_at and contact.next_attempt_at > at:
-                    continue
-                try:
-                    with db.begin_nested():
-                        svc.request_call(db, customer.id, f"campaign:{customer.id}:{at.date()}:{at.hour}", at=at)
-                except Rejected:
-                    pass
+            from brightwater.campaign import configuration_issues, enqueue_due
+            if not configuration_issues(cfg):
+                enqueue_due(db, at)
         rows = db.scalars(select(m.Outbox).where(m.Outbox.delivered_at.is_(None),
             or_(m.Outbox.published_at.is_(None), m.Outbox.published_at < at - timedelta(seconds=60))
         ).order_by(m.Outbox.created_at).with_for_update(skip_locked=True).limit(50)).all()

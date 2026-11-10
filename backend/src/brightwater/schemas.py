@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 
 class Strict(BaseModel):
@@ -47,6 +47,7 @@ class ServiceItem(Strict):
 
 
 class AvailabilityInput(Strict):
+    same_day: bool = True
     items: list[ServiceItem] = Field(min_length=1, max_length=20)
     preferred_day: date | None = None
     preferred_period: Literal["MORNING", "AFTERNOON"] | None = None
@@ -83,3 +84,9 @@ class FollowupInput(Strict):
     event_id: str
     detail: str = Field(min_length=10, max_length=1500)
     requested: bool = False
+
+
+class CampaignAdmission(Strict):
+    call_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    session_token: SecretStr
+    phone: SecretStr

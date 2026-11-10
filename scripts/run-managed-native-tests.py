@@ -25,13 +25,13 @@ owned = json.loads(a.agent_state.read_text())
 resources = json.loads(a.quality_state.read_text())
 quality = {'dictionary': resources.get('dictionary'), **resources['agents'][owned['agent_id']]}
 tests = quality['tests']
-keys = a.select or list(tests)
+keys = a.select or [k for k, v in tests.items() if not v.get('retired')]
 assert 1 <= len(keys) * a.repeat <= 30 and set(keys) <= set(tests)
 body = {'name': 'Brightwater / ' + a.profile + ' / ' + a.output.stem,
         'tests': [{'test_id': tests[k]['id']} for k in keys], 'repeat_count': a.repeat}
 if a.profile != 'live':
     candidate = config(owned['knowledge_id'], 'https://api.46.101.11.137.sslip.io', owned['provider_secret_id'],
-                       phone=owned.get('phone_profile', False), quality=quality, profile=a.profile)
+                       phone=owned.get('phone_profile', False), quality=quality, profile=a.profile, campaign=owned.get("campaign_profile", False))
     body['agent_config_override'] = {k: candidate[k] for k in ['conversation_config', 'platform_settings']}
 record = {'submission_started_at': time.time(), 'profile': a.profile, 'keys': keys, 'repeat': a.repeat,
           'phone_calls': 0, 'evidence_scope': 'native provider behavior tests, not live business action or handset quality'}
@@ -93,6 +93,9 @@ with httpx.Client(base_url='https://api.elevenlabs.io', headers={'xi-api-key': o
                 for call in matches:
                     args = json.loads(call['params_as_json'])
                     passed = passed and args.get('arguments', {}).get('proposal_id') == expected['expected_proposal_id']
+                if expected.get('expected_tool') in {'confirm_booking', 'cancel_arrangement'}:
+                    passed = passed and calls[0].get('tool_name') == expected['expected_tool']
+                    passed = passed and not any(call.get('tool_name') in {'confirm_booking', 'cancel_arrangement', 'record_followup'} and call not in matches for call in calls)
                 if run.get('test_name', '').startswith('Brightwater boundary'):
                     # The guarded finish followed by native end_call is the
                     # intended two-step automation closing, not two writes.

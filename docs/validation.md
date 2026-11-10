@@ -158,3 +158,8 @@ The owner-initiated twenty-first call saved a third fictional engineering bookin
 ## 10 November: call22 booking continuity
 
 See [call22-booking-continuity.md](call22-booking-continuity.md) for the actual fourth fictional booking, retained22 attempts, engineer/date preferences, shared CRM read model and successful checks. This latest entry supersedes earlier attempt-count and paused-configuration checkpoints; ordinary UK customer calling remains disabled. No further handset call was placed or authorised by this release.
+
+
+## Automatic reminders and screenshot brief audit
+
+See [campaign-and-brief-coverage.md](campaign-and-brief-coverage.md) for the 28-day native ElevenLabs campaign, all screenshot requirements, policy/queue controls, remaining activation gates and evidence limits. Customer calling remains off, India remains an attended engineering route and no extra phone attempt is authorised.

@@ -35,7 +35,7 @@ def terminal_reason(db, call, evidence):
     if business_request(meaning):
         return None
     source = db.get(m.CallEvent, evidence.source_id)
-    if (call.purpose != 'engineering' or not source or source.call_id != call.id
+    if (call.purpose not in {'engineering', 'campaign'} or not source or source.call_id != call.id
         or source.kind != 'user_utterance'
         or source.payload.get('source') != 'plivo_elevenlabs_observer'
         or source.payload.get('text', '').strip() != evidence.reply.strip()

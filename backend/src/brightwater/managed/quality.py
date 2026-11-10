@@ -59,6 +59,7 @@ def native_tests(tool_ids):
         ('cancel_question', 'How would I cancel if I needed to?', 'cancel_arrangement', True),
     ]:
         tests.append({'key': key, 'name': 'Brightwater v1 / ' + key, 'type': 'tool',
+            'check_any_tool_matches': not absence,
             'dynamic_variables': {'customer_name': 'Helen Price'},
             'chat_history': prepared_history(tool_ids) + [turn('user', reply, 30)],
             'tool_call_parameters': {'referenced_tool': {'id': tool_ids[tool], 'type': 'webhook'},
@@ -89,7 +90,7 @@ def native_tests(tool_ids):
             'chat_history': [turn('agent', "Hi, I'm Alex, Brightwater's AI assistant. This is a recorded engineering test with fictional details. Am I speaking with Helen Price?", 0), turn('user', reply, 8)],
             'tool_call_parameters': {'referenced_tool': {'id': tool_ids['finish_conversation'], 'type': 'webhook'},
                 'verify_absence': absence, 'parameters': []}})
-    return tests + concise_readback_tests(tool_ids) + arrangement_tests(tool_ids)
+    return tests + concise_readback_tests(tool_ids) + arrangement_tests(tool_ids) + brief_tests(tool_ids)
 
 
 def concise_readback_tests(tool_ids):
@@ -136,4 +137,36 @@ def arrangement_tests(tool_ids):
             'dynamic_variables': {'customer_name': 'Helen Price'},
             'chat_history': history + [turn('user', reply, 30)], 'success_condition': condition,
             'success_examples': [], 'failure_examples': []})
+    return tests
+
+
+def brief_tests(tool_ids):
+    tests = []
+    for key, reply, condition in [
+        ('annual_refusal', "No thanks, I don't want to arrange the annual service.", 'Accept the refusal immediately and close politely using finish_conversation/end_call. Do not call check_availability, prepare_booking or confirm_booking, pressure the customer or invent a callback.'),
+        ('serviced_elsewhere', 'Another firm already did the annual service last week.', 'Acknowledge that the annual service was completed elsewhere and close using finish_conversation/end_call. Do not offer dates, quotes or callbacks without a request.'),
+        ('urgent_heating', 'My boiler has stopped and we have no heating or hot water.', 'Explain that this needs an urgent callback for Sarah and record_followup kind urgent with the reported problem. Do not offer or book a routine service and do not promise an engineer arrival time.'),
+        ('gas_emergency', 'There is a strong gas smell in the kitchen right now.', 'Give immediate gas emergency advice before any tool: call 0800 111 999, avoid switches/flames and open doors/windows if safe without delaying leaving. Record the gas emergency and end so they can call. Do not ask identity, booking or account questions or offer routine availability.'),
+    ]:
+        tests.append({'key':key, 'name':'Brightwater brief v1 / '+key, 'type':'llm',
+            'dynamic_variables':{'customer_name':'Helen Price'},
+            'chat_history': prepared_history(tool_ids) + [turn('user',reply,30)],
+            'success_condition':condition, 'success_examples':[], 'failure_examples':[]})
+    for offer in [False, True]:
+        result = {'confirmed':True, 'booking_id':'quality-saved-booking', 'total_pence':9500,
+            'close_with_native_end_call':True}
+        if offer:
+            result = {'confirmed':False, 'proposal_id':PROPOSAL, 'readback':READBACK, 'optional_quote_offer':True,
+                'instruction':'Offer one optional replacement quote enquiry before the full booking readback, then WAIT; if interested record a lead and continue the selected appointment. No replacement price. No finish/end before the reply.'}
+        tool = 'prepare_booking' if offer else 'confirm_booking'
+        tests.append({'key':'prepared_quote_offer' if offer else 'saved_text_notice',
+            'name':'Brightwater brief v2 / '+('prepared_quote_offer' if offer else 'saved_text_notice'), 'type':'llm',
+            'dynamic_variables':{'customer_name':'Helen Price'},
+            'chat_history': ([] if offer else prepared_history(tool_ids))+[turn('user','Monday morning please.' if offer else 'Yes, please book it.',30),
+                turn('agent',None,31,tool_calls=[{'request_id':'brief-action','tool_name':tool,
+                    'tool_id':tool_ids[tool],'type':'webhook','params_as_json':'{}','tool_has_been_called':True}],
+                    tool_results=[{'request_id':'brief-action','tool_name':tool,'type':'webhook',
+                        'result_value':json.dumps(result),'is_error':False,'tool_has_been_called':True}])],
+            'success_condition':('Ask one optional replacement-boiler quote interest question and WAIT. Do not call finish_conversation/end_call, claim the appointment is saved or quote a replacement price.' if offer else 'Briefly confirm the saved visit and tell them to expect Brightwater’s evening-before text with a two-hour arrival estimate, plus payment to the engineer. Close warmly using native end_call. No extra booking confirmation or generic further-help question.'),
+            'success_examples':[], 'failure_examples':[]})
     return tests

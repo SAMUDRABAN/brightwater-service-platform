@@ -53,7 +53,7 @@ def allowed_time(at: datetime, not_before=None) -> bool:
         raise ValueError("Policy requires a timezone-aware timestamp")
     local = at.astimezone(UK)
     minute = local.hour * 60 + local.minute
-    end = 12 * 60 + 55 if local.weekday() == 5 else 19 * 60 + 25
+    end = 13 * 60 if local.weekday() == 5 else 19 * 60 + 30
     start = max(600, not_before.hour * 60 + not_before.minute if not_before else 600)
     return local.weekday() != 6 and start <= minute < end
 

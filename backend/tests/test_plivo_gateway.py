@@ -385,3 +385,51 @@ def test_authenticated_stop_can_only_end_the_existing_bound_call_once(polite):
     context['status'] = 'ended'
     assert client.post('/v1/stop', headers=headers, json={'call_id': call_id}).json()['already_ended'] is True
     assert stopped == ([] if polite else ['carrier-owned'])
+
+
+def test_india_gateway_cannot_be_configured_for_customer_campaigns():
+    with pytest.raises(ValueError, match='engineering-only'):
+        config(gateway_campaign_enabled=True)
+
+
+def test_uk_campaign_gateway_checks_main_admission_and_never_redials(monkeypatch):
+    import httpx
+
+    import brightwater.plivo_gateway as gateway
+    cfg = config(gateway_country='GB', gateway_enabled=True, gateway_campaign_enabled=True,
+        plivo_from_number='+442079460123', engineering_recipient='', voice_backend='elevenlabs')
+    app = create_app(cfg)
+    class Broker:
+        def __init__(self):self.values = {}
+        async def get(self,key):return self.values.get(key)
+        async def set(self,key,value,**kw):
+            if kw.get('nx') and key in self.values:
+                return False
+            self.values[key] = str(value).encode()
+            return True
+    class Store:
+        def __init__(self):self.values = {}
+        async def get(self,key):return self.values.get(key)
+        async def put(self,key,value):self.values[key] = dict(value)
+    class Carrier:
+        def __init__(self):self.requests = 0
+        async def make_call(self,**kw):
+            self.requests += 1
+            assert kw['to_number'] == '+447911123456'
+            return 'accepted-isolated-carrier-fixture'
+    class Main:
+        def __init__(self,**kw):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        async def post(self,url,**kw):
+            return httpx.Response(200,json={'admitted':True,'call_id':kw['json']['call_id']},request=httpx.Request('POST',url))
+    monkeypatch.setattr(gateway.httpx,'AsyncClient',Main)
+    app.state.redis, app.state.store, app.state.carrier = Broker(), Store(), Carrier()
+    client = TestClient(app)
+    body = {'call_id':'11111111-1111-1111-1111-111111111111','purpose':'campaign',
+        'phone':'+447911123456','session_token':'isolated-scoped-token','max_seconds':900}
+    headers = {'Authorization':'Bearer '+cfg.gateway_token.get_secret_value()}
+    assert client.post('/v1/outbound',headers=headers,json={**body,'phone':'+919876543210'}).status_code == 403
+    assert client.post('/v1/outbound',headers=headers,json=body).status_code == 202
+    assert client.post('/v1/outbound',headers=headers,json=body).json()['replayed'] is True
+    assert app.state.carrier.requests == 1
