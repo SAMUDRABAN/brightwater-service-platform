@@ -46,16 +46,22 @@ def enqueue_due(db, at=None):
     from brightwater.config import settings
     cfg = settings()
     queued = []
+    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
+    dispatched = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.purpose == 'campaign',
+        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1)))
+    if dispatched >= cfg.campaign_daily_limit:
+        return queued
     active = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.state.in_(svc.ACTIVE)))
-    budget = max(0, cfg.max_active_calls + 1 - active)
+    budget = max(0, min(cfg.max_active_calls + 1 - active, cfg.campaign_daily_limit - dispatched))
     if not budget:
         return queued
     approved = set(db.scalars(select(m.Destination.customer_id).where(m.Destination.enabled.is_(True))))
+    contacts = {c.customer_id: c for c in db.scalars(select(m.CampaignContact).where(
+        m.CampaignContact.year == at.astimezone(UK).year))}
     for person, _ in due_customers(db, at):
-        if person.id not in approved:
+        if person.id not in approved or person.contact_blocked:
             continue
-        contact = db.scalar(select(m.CampaignContact).where(m.CampaignContact.customer_id == person.id,
-            m.CampaignContact.year == at.astimezone(UK).year))
+        contact = contacts.get(person.id)
         if contact and (contact.stopped or contact.next_attempt_at and contact.next_attempt_at > at):
             continue
         # Request policy serialises destination, suppression, window and attempt

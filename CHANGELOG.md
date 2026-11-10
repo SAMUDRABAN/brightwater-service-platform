@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.2] - 2026-11-10
+
+- Return before customer scans when the daily call budget is exhausted, and bulk-read campaign contact state. A620-customer integration check ensures the scheduler takes no booking advisory locks in the exhausted case, protecting live booking latency.
+
 ## [0.4.1] - 2026-11-10
 
 - Restore all third-party dependency pins after the release version update accidentally changed an unrelated 0.3.1 dependency to a non-existent 0.4.0. Only the Brightwater package version changes. CI and image build rejected 0.4.0 before activation; the live deployment was unaffected.

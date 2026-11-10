@@ -171,3 +171,33 @@ def test_ageing_boiler_quote_is_offered_once_before_readback_and_never_reopens_s
         repeated = conv.execute(db,'prepare_booking',{'offer_id':offer.id,'tenants':[]},'old-boiler-repeat')
         assert repeated['optional_quote_offer'] is False
         assert not list(db.scalars(select(m.Followup).where(m.Followup.kind=='lead'))), 'Age alone is not customer interest'
+
+
+def test_exhausted_daily_campaign_budget_does_not_take_hundreds_of_booking_locks():
+    from sqlalchemy import event
+
+    from brightwater.db import engine
+    with session() as db, db.begin():
+        customers = [m.Customer(id=f'LOAD-{i:04}', name='Isolated scheduler load fixture', kind='homeowner', source_phone='Not a real contact') for i in range(620)]
+        db.add_all(customers)
+        db.flush()
+        destinations = []
+        for i, customer in enumerate(customers):
+            prop = m.Property(id=f'{customer.id}-P1',customer_id=customer.id,address='Isolated fictional fixture',boiler='Test',boiler_year=2020)
+            db.add(prop)
+            destinations.append(m.Destination(customer_id=customer.id,phone=f'+447911{i:06}',enabled=True,consent_reference='Database-only load fixture; never dispatch or dial'))
+        db.add_all(destinations)
+        db.flush()
+        db.add_all([m.Obligation(id=f'LOAD-O{i}',property_id=f'{c.id}-P1',service='service',due_date=AT.date()+timedelta(days=14)) for i,c in enumerate(customers)])
+        db.add_all([m.Call(customer_id=c.id,destination_id=destinations[i].id,year=2026,attempt=1,request_key=m.uid(),state='finished',dispatched_at=AT-timedelta(minutes=30),time_band='morning') for i,c in enumerate(customers[:20])])
+        db.flush()
+        statements = []
+        def observed(connection,cursor,statement,parameters,context,executemany):
+            statements.append(statement)
+        event.listen(engine(),'before_cursor_execute',observed)
+        try:
+            assert enqueue_due(db,AT)==[]
+        finally:
+            event.remove(engine(),'before_cursor_execute',observed)
+        assert len(statements)<=3, 'Exhausted quota must return before per-customer locks or reads'
+        assert not any('pg_advisory_xact_lock' in q for q in statements)
