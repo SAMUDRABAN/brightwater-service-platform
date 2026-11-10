@@ -108,7 +108,7 @@ def metrics():
 
 @app.get("/v1/customers", dependencies=OPERATOR)
 def customers(db: DB):
-    values = db.scalars(select(m.Customer).where(m.Customer.id != "ENGINEERING-SAMUDRA").order_by(m.Customer.name)).all()
+    values = db.scalars(select(m.Customer).where(~m.Customer.id.startswith("ENGINEERING-")).order_by(m.Customer.name)).all()
     destinations = {d.customer_id: d for d in db.scalars(select(m.Destination))}
     suppressions = list(db.scalars(select(m.Suppression)))
     due = dict(db.execute(select(m.Property.customer_id, func.min(m.Obligation.due_date)).join(
@@ -167,7 +167,7 @@ async def engineering_call(body: s.EngineeringCallInput, background_tasks: Backg
     except (httpx.HTTPError, ValueError):
         raise Rejected("voice_gateway_unavailable", "The regional voice service is not ready; no call was requested", 503) from None
     with session() as db, db.begin():
-        value, token = prepare_engineering(db, cfg, body.request_key)
+        value, token = prepare_engineering(db, cfg, body.request_key, scenario=body.scenario)
         call_id, state = value.id, value.state
     if token is None:
         return {"id": call_id, "state": state, "purpose": "engineering", "replayed": True}
@@ -242,7 +242,7 @@ def dashboard(request: Request, db: DB):
     booked_customers = set(db.scalars(select(m.Booking.customer_id).join(m.Call, m.Call.id == m.Booking.call_id).where(m.Booking.state == "confirmed", m.Call.purpose == "campaign")))
     contacted = {c.customer_id for c in call_rows if c.dispatched_at}
     reached = {c.customer_id for c in call_rows if c.conversation}
-    customer_count = db.scalar(select(func.count()).select_from(m.Customer).where(m.Customer.id != "ENGINEERING-SAMUDRA"))
+    customer_count = db.scalar(select(func.count()).select_from(m.Customer).where(~m.Customer.id.startswith("ENGINEERING-")))
     followups = []
     for follow in db.scalars(select(m.Followup).where(m.Followup.resolved.is_(False)).order_by(m.Followup.priority, m.Followup.created_at)):
         call = db.get(m.Call, follow.call_id)

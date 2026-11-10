@@ -201,3 +201,35 @@ def test_exhausted_daily_campaign_budget_does_not_take_hundreds_of_booking_locks
             event.remove(engine(),'before_cursor_execute',observed)
         assert len(statements)<=3, 'Exhausted quota must return before per-customer locks or reads'
         assert not any('pg_advisory_xact_lock' in q for q in statements)
+
+
+def test_answered_carrier_failure_is_reported_and_quarantined_without_a_retry():
+    from conftest import make_call
+    from test_managed_phone import event
+
+    with session() as db, db.begin():
+        call, _ = make_call(db, verified=False)
+        event(db, call, 'failed', now(), source='voice_gateway_failure', carrier_answered=True)
+        contact = db.scalars(select(m.CampaignContact).where(
+            m.CampaignContact.customer_id == call.customer_id)).one()
+        assert call.outcome == 'No answer' and contact.stopped
+        assert 'carrier answered' in call.summary
+        assert db.scalars(select(m.Followup).where(
+            m.Followup.call_id == call.id, m.Followup.kind == 'internal_review')).one()
+
+
+def test_engineering_voicemail_uses_approved_test_number_once(monkeypatch):
+    from pydantic import SecretStr
+    from test_call_boundaries import turn
+
+    cfg = settings().model_copy(update={'engineering_callback_number': SecretStr('+919876543210')})
+    monkeypatch.setattr('brightwater.config.settings', lambda: cfg)
+    with session() as db, db.begin():
+        call, conv, _ = phone(db)
+        call.identity_verified = False
+        proof = turn(db, call, conv, 0, 'voicemail', warning=False)
+        first = voicemail_result(db, call, proof)
+        assert first['message_allowed'] and '9 1 9 8 7 6 5 4 3 2 1 0' in first['approved_message']
+        assert 'engineering test' in first['approved_message']
+        assert 'Helen' not in first['approved_message'] and 'Albert' not in first['approved_message']
+        assert voicemail_result(db, call, proof)['approved_message'] is None

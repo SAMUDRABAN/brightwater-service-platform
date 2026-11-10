@@ -517,9 +517,19 @@ def finalise(db, call, summary):
     dest = db.get(m.Destination, call.destination_id)
     if suppressed(db, call.customer_id, dest.phone):
         facts.add("Do not call")
-    fallback = None if answered or "recording_refused" in kinds or call.purpose == "managed_evaluation" else "No answer"
+    technical_failure = answered and any(
+        e.kind == "failed" and e.payload.get("source") in {"voice_gateway_failure", "signed_plivo_status"}
+        for e in events
+    )
+    fallback = None
+    if "recording_refused" not in kinds and call.purpose != "managed_evaluation" and (not answered or technical_failure):
+        fallback = "No answer"  # The assessment groups failed calls with No answer.
+
     call.outcome = next((o for o in OUTCOMES if o in facts), fallback)
-    if call.outcome is None and answered and "recording_refused" not in kinds and not any(e.kind == "turn_state" and e.payload.get("source") == "boundary_terminal_requested" for e in events) and not db.scalar(
+    needs_review = call.outcome is None or (technical_failure and call.outcome == "No answer")
+    if technical_failure and call.outcome == "No answer":
+        summary = "The carrier answered, but a technical failure ended the call without a business outcome. Review before calling again."
+    if needs_review and answered and "recording_refused" not in kinds and not any(e.kind == "turn_state" and e.payload.get("source") == "boundary_terminal_requested" for e in events) and not db.scalar(
         select(m.Followup.id).where(m.Followup.call_id == call.id, m.Followup.kind == "internal_review").limit(1)
     ):
         db.add(m.Followup(call_id=call.id, kind="internal_review", owner="Sarah", priority=1,
@@ -528,7 +538,7 @@ def finalise(db, call, summary):
     connected = db.scalar(select(func.min(m.CallEvent.occurred_at)).where(
         m.CallEvent.call_id == call.id, m.CallEvent.kind == "connected"))
     call.duration_seconds = max(0, int((call.ended_at - connected).total_seconds())) if connected else 0
-    if call.conversation or call.outcome not in {"No answer", "Voicemail", "Not available"}:
+    if call.conversation or technical_failure or call.outcome not in {"No answer", "Voicemail", "Not available"}:
         stop_campaign(db, call)
     else:
         contact = db.scalar(select(m.CampaignContact).where(m.CampaignContact.customer_id == call.customer_id,

@@ -20,6 +20,7 @@ class CallInput(Strict):
 
 class EngineeringCallInput(Strict):
     request_key: str = Field(min_length=8, max_length=160)
+    scenario: Literal["standard", "landlord"] = "standard"
 
 
 class EventInput(Strict):

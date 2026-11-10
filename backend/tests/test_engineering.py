@@ -104,3 +104,17 @@ def test_unreachable_voice_gateway_cannot_create_a_dial_intent(monkeypatch):
     assert response.json()["error"] == "voice_gateway_unavailable"
     with session() as db:
         assert db.scalar(select(m.Call.id)) is None
+
+
+def test_landlord_roleplay_has_three_fictional_properties_and_same_allowlisted_destination():
+    with session() as db, db.begin():
+        call, token = prepare_engineering(db, config(), "landlord-test-request", scenario="landlord")
+        account = db.get(m.Customer, call.customer_id)
+        properties = db.scalars(select(m.Property).where(m.Property.customer_id == account.id)).all()
+        assert token and call.purpose == "engineering"
+        assert account.kind == "landlord" and len(properties) == 3
+        assert all(prop.address.startswith("Fictional engineering property") for prop in properties)
+        assert db.get(m.Destination, call.destination_id).phone == config().engineering_recipient.get_secret_value()
+        with pytest.raises(Rejected) as error:
+            prepare_engineering(db, config(), "landlord-test-request")
+        assert error.value.code == "request_conflict"

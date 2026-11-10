@@ -35,7 +35,7 @@ def due_customers(db, at=None):
     # One row per customer, including landlords with multiple due properties.
     # Overdue work goes to office review, not an endless historical autodial loop.
     return db.execute(select(m.Customer, func.min(m.Obligation.due_date).label('first_due'))
-        .select_from(m.Customer).join(m.Property, m.Property.customer_id == m.Customer.id).join(m.Obligation, m.Obligation.property_id == m.Property.id).where(m.Customer.id != 'ENGINEERING-SAMUDRA',
+        .select_from(m.Customer).join(m.Property, m.Property.customer_id == m.Customer.id).join(m.Obligation, m.Obligation.property_id == m.Property.id).where(~m.Customer.id.startswith("ENGINEERING-"),
             m.Obligation.resolved.is_(False), m.Obligation.due_date >= today,
             m.Obligation.due_date <= today + timedelta(days=28))
         .group_by(m.Customer.id).order_by((m.Customer.kind != 'landlord'), func.min(m.Obligation.due_date), m.Customer.id)).all()
@@ -91,8 +91,14 @@ def status(db, cfg):
             'due_date': day.isoformat()} for c, day in due[:20]]}
 
 
+def voicemail_message_configured(call):
+    from brightwater.config import settings
+    return call.purpose == 'campaign' or (
+        call.purpose == 'engineering' and bool(settings().engineering_callback_number.get_secret_value()))
+
+
 def voicemail_result(db, call, evidence):
-    """Claim only a genuinely detected campaign voicemail, once per campaign."""
+    """Claim a verified voicemail message once per customer and year."""
     from brightwater import schemas as s
     from brightwater.managed.boundaries import terminal_reason
     if terminal_reason(db, call, evidence) != 'voicemail':
@@ -100,18 +106,30 @@ def voicemail_result(db, call, evidence):
     contact = db.scalar(select(m.CampaignContact).where(m.CampaignContact.customer_id == call.customer_id,
         m.CampaignContact.year == call.year).with_for_update())
     if contact is None:
-        raise Rejected('campaign_missing', 'No campaign record exists for this voicemail')
+        if call.purpose != 'engineering':
+            raise Rejected('campaign_missing', 'No campaign record exists for this voicemail')
+        contact = m.CampaignContact(customer_id=call.customer_id, year=call.year)
+        db.add(contact)
+        db.flush()
     allowed = not contact.voicemail_claimed
     contact.voicemail_claimed = True
     from brightwater.config import settings
     cfg = settings()
-    try:
-        number = uk_phone(cfg.office_callback_number)
-    except Rejected:
-        allowed = False
-        number = ''
-    message = ("Hello, this is Brightwater Plumbing and Heating's automated assistant. Please call our office on "
-               + ('0' + number[3:]) + '. Thank you.') if allowed else None
+    if call.purpose == 'engineering':
+        import re
+        number = cfg.engineering_callback_number.get_secret_value()
+        allowed = allowed and bool(re.fullmatch(r'\+91[6-9]\d{9}', number))
+        introduction = "This is Alex, Brightwater's automated assistant, leaving an engineering test message."
+        callback = 'The approved test callback number is ' + ' '.join(number.lstrip('+')) + '.'
+    else:
+        introduction = "Hello, this is Brightwater Plumbing and Heating's automated assistant."
+        try:
+            number = uk_phone(cfg.office_callback_number)
+        except Rejected:
+            allowed = False
+            number = ''
+        callback = 'Please call our office on ' + ('0' + number[3:]) + '.'
+    message = f'{introduction} {callback} Thank you.' if allowed else None
     if not db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id,
         m.CallEvent.provider_event_id == 'campaign-voicemail:' + call.id)):
         svc.record_event(db, call.id, s.EventInput(provider_event_id='campaign-voicemail:' + call.id,

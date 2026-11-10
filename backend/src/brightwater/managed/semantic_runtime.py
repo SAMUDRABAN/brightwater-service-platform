@@ -114,8 +114,10 @@ def apply_control(db, call, evidence):
     """Only trusted current caller data can stop or revoke access; no model write args."""
     if evidence.meaning is None or evidence.meaning.control == 'none':
         return False
-    if evidence.meaning.control == 'voicemail' and call.purpose == 'campaign':
-        return False
+    if evidence.meaning.control == 'voicemail':
+        from brightwater.campaign import voicemail_message_configured
+        if voicemail_message_configured(call):
+            return False
     if evidence.meaning.control in BOUNDARIES:
         reason = terminal_reason(db, call, evidence)
         if not reason:

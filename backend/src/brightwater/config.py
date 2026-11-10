@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     voice_gateway_token: SecretStr = SecretStr("")
     engineering_enabled: bool = False
     engineering_recipient: SecretStr = SecretStr("")
+    engineering_callback_number: SecretStr = SecretStr("")
     engineering_consent_reference: str = ""
     engineering_display_name: str = "Samudra"
     engineering_call_limit: int = Field(default=3, ge=1, le=1000, description="Privately authorised lifetime attempt total; historical requests are never reset")

@@ -38,7 +38,7 @@ def lab_engine():
 
 def create_evaluation(db, customer_id):
     customer = db.get(m.Customer, customer_id)
-    if not customer or customer_id == "ENGINEERING-SAMUDRA":
+    if not customer or customer_id.startswith("ENGINEERING-"):
         raise Rejected("not_found", "Choose an assessment fixture", 404)
     if db.scalar(select(m.Call.id).where(m.Call.state == "in_progress")):
         raise Rejected("managed_busy", "Finish the active evaluation first")
@@ -240,9 +240,10 @@ class Conversation:
                 result = {"saved": True, "request_id": event.id if event else key, "instruction": "Request recorded only. No live transfer, notification or callback-time guarantee."}
         elif name == "finish_conversation":
             from brightwater.managed.boundaries import BOUNDARIES, business_request
-            if call.purpose == "campaign" and self.understanding and self.understanding.meaning.control == "voicemail":
-                from brightwater.campaign import voicemail_result
-                return voicemail_result(db, call, self.understanding)
+            if self.understanding and self.understanding.meaning.control == "voicemail":
+                from brightwater.campaign import voicemail_message_configured, voicemail_result
+                if voicemail_message_configured(call):
+                    return voicemail_result(db, call, self.understanding)
             if self.understanding and self.understanding.meaning and self.understanding.meaning.control in BOUNDARIES:
                 if business_request(self.understanding.meaning):
                     return {'finished': False, 'instruction': 'Continue the genuine enquiry, follow-up or arrangement request. Give emergency advice immediately where needed; do not issue a conduct warning or terminate for frustration.'}
