@@ -338,8 +338,8 @@ def test_numeric_stream_account_label_needs_authenticated_matching_stream_metada
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("polite", [False, True])
-def test_authenticated_stop_can_only_end_the_existing_bound_call_once(polite):
+@pytest.mark.parametrize("polite,message", [(False, None), (True, None), (False, "Your opt-out is saved.")])
+def test_authenticated_stop_can_only_end_the_existing_bound_call_once(polite, message):
     from types import SimpleNamespace
     call_id = '11111111-1111-1111-1111-111111111111'
     context = {'call_id': call_id, 'call_uuid': 'carrier-owned', 'status': 'streaming', 'answer_verified': True}
@@ -377,14 +377,18 @@ def test_authenticated_stop_can_only_end_the_existing_bound_call_once(polite):
     context['answer_verified'] = False
     assert client.post('/v1/stop', headers=headers, json={'call_id': call_id}).status_code == 409
     context['answer_verified'] = True
-    result = client.post('/v1/stop', headers=headers, json={'call_id': call_id, 'polite': polite}).json()
-    assert result == ({'stopped': False, 'polite_closing_requested': True} if polite else {'stopped': True})
-    assert boundary.is_set() is polite
+    request = {'call_id': call_id, 'polite': polite, 'closing_message': message}
+    result = client.post('/v1/stop', headers=headers, json=request).json()
+    plays_closing = polite or message is not None
+    assert result == ({'stopped': False, 'polite_closing_requested': True} if plays_closing else {'stopped': True})
+    assert boundary.is_set() is plays_closing
+    if plays_closing:
+        assert app.state.active_bridges[call_id].closing_message == message
     assert client.post('/v1/stop', headers=headers, json={'call_id': call_id, 'polite': polite}).json()['already_requested'] is True
-    assert stopped == ([] if polite else ['carrier-owned'])
+    assert stopped == ([] if plays_closing else ['carrier-owned'])
     context['status'] = 'ended'
     assert client.post('/v1/stop', headers=headers, json={'call_id': call_id}).json()['already_ended'] is True
-    assert stopped == ([] if polite else ['carrier-owned'])
+    assert stopped == ([] if plays_closing else ['carrier-owned'])
 
 
 def test_india_gateway_cannot_be_configured_for_customer_campaigns():

@@ -212,10 +212,15 @@ def prefetch(call_id, event_id):
                 if call and call.state == 'in_progress':
                     call.identity_verified = False
                     svc.finalise(db, call, 'The caller asked to stop this contact. No further account access was permitted.')
-            stop_carrier(call_id)
+            if explicit_recording_refusal(text):
+                stop_carrier(call_id)
+            else:
+                from brightwater.managed.closing import OPT_OUT
+                stop_carrier(call_id, closing_message=OPT_OUT)
             return
         redis = broker()
         evidence = interpret(current, redis=redis)
+        message = None
         with Session(engine()) as db, db.begin():
             svc.control_lock(db)
             call = db.scalar(select(m.Call).where(m.Call.id == call_id).with_for_update())
@@ -227,25 +232,43 @@ def prefetch(call_id, event_id):
             if latest['source_id'] != event_id or snapshot_digest(latest) != evidence.digest:
                 return
             record_meaning(db, call, evidence)
-            terminal = apply_control(db, call, evidence)
+            if evidence.meaning.control == 'voicemail' and terminal_reason(db, call, evidence) == 'voicemail':
+                result = finish_phone_voicemail(db, call, evidence)
+                terminal, message = True, result['approved_message']
+            else:
+                terminal = apply_control(db, call, evidence)
         if terminal:
-            stop_carrier(call_id, polite=evidence.meaning.control in BOUNDARIES)
+            control = evidence.meaning.control
+            if control == 'stop_calling':
+                from brightwater.managed.closing import OPT_OUT
+                message = OPT_OUT
+            stop_carrier(call_id, polite=control in BOUNDARIES - {'voicemail'}, closing_message=message)
     except Exception:
         # Cache/prefetch is not permission. The tool path must obtain and validate
         # a usable decision, or fail closed without requesting another yes.
         return
 
 
-def stop_carrier(call_id, *, polite=False):
+def finish_phone_voicemail(db, call, evidence):
+    from brightwater.campaign import voicemail_result
+    result = voicemail_result(db, call, evidence)
+    svc.finalise(db, call, 'Voicemail detected. Message playback is recorded separately.')
+    return result
+
+
+def stop_carrier(call_id, *, polite=False, closing_message=None):
     """Only revoke an already admitted call; never admit, redial or change routing."""
     cfg = settings()
     if not cfg.voice_gateway_url or not cfg.voice_gateway_token.get_secret_value():
         return False
+    payload = {'call_id': call_id, 'polite': polite}
+    if closing_message:
+        payload['closing_message'] = closing_message
     try:
         with httpx.Client(timeout=4, follow_redirects=False) as client:
             result = client.post(cfg.voice_gateway_url.rstrip('/') + '/v1/stop',
                 headers={'Authorization': 'Bearer ' + cfg.voice_gateway_token.get_secret_value()},
-                json={'call_id': call_id, **({'polite': True} if polite else {})})
+                json=payload)
             result.raise_for_status()
         return True
     except Exception:

@@ -99,6 +99,9 @@ def conversation_from_history(call_id, text_only, raw, state):
 def closed_result(db, call_id, *, phone=False):
     call = db.get(m.Call, call_id)
     if call and call.purpose in ({"engineering", "campaign"} if phone else {"managed_evaluation"}) and call.state in {"finished", "failed"}:
+        if phone and call.outcome in {'Voicemail', 'Do not call'}:
+            return {'finished': True, 'outcome': call.outcome,
+                    'instruction': 'The phone gateway is closing this call. Wait without speaking or invoking end_call.'}
         return {"finished": True, "outcome": call.outcome,
                 "confirmed": bool(db.scalar(select(m.Booking.id).where(m.Booking.call_id == call.id, m.Booking.state == "confirmed"))),
                 "instruction": "This session is complete. Its saved outcome remains valid. Do not reopen booking or claim a saved booking failed. Call end_call now."}
@@ -330,7 +333,7 @@ def install(app, operator, scoped_call):
                         result = parameter_error(error)
                     if result.get("error") != "evidence_pending":
                         db.add(m.CallEvent(call_id=state["id"], provider_event_id="managed-tool:" + operation,
-                                          kind="managed_tool_result", occurred_at=now(), payload={"name": name, "result": result}))
+                                          kind="managed_tool_result", occurred_at=now(), payload={"name": name, "result": {key: value for key, value in result.items() if key != "gateway_message"}}))
                 call = db.get(m.Call, state["id"])
                 bind_conversation(db, call, x_brightwater_conversation, phone=conv.trusted_phone)
             state["readbacks"] = conv.readbacks
@@ -338,7 +341,12 @@ def install(app, operator, scoped_call):
             if conv.closed:
                 release_lease(redis, digest)
             if conv.trusted_phone and result.get('stopped'):
+                from brightwater.managed.closing import OPT_OUT
                 from brightwater.managed.semantic_runtime import stop_carrier
+                if result.get('gateway_voicemail') or result.get('opt_out'):
+                    stop_carrier(state['id'], closing_message=OPT_OUT if result.get('opt_out') else result.get('gateway_message'))
+                    return {'finished': True,
+                            'instruction': 'The phone gateway is closing this call. Wait without speaking or invoking end_call.'}
                 stop_carrier(state['id'], polite=bool(result.get('boundary_reason')))
             return result
         finally:

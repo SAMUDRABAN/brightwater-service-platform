@@ -233,3 +233,31 @@ def test_engineering_voicemail_uses_approved_test_number_once(monkeypatch):
         assert 'engineering test' in first['approved_message']
         assert 'Helen' not in first['approved_message'] and 'Albert' not in first['approved_message']
         assert voicemail_result(db, call, proof)['approved_message'] is None
+
+
+def test_verified_voicemail_requests_first_message_without_native_tool(monkeypatch):
+    from test_call_boundaries import turn
+
+    from brightwater.managed import semantic_runtime
+
+    monkeypatch.setattr(settings(), 'managed_phone_enabled', True)
+    monkeypatch.setattr(settings(), 'engineering_callback_number', SecretStr('+919876543210'))
+    monkeypatch.setattr('brightwater.managed.gateway.broker', lambda: None)
+    sent = []
+
+    def stop(call_id, *, polite, closing_message):
+        with session() as db:
+            assert db.get(m.Call, call_id).outcome == 'Voicemail'
+        sent.append(closing_message)
+
+    monkeypatch.setattr(semantic_runtime, 'stop_carrier', stop)
+    with session() as db, db.begin():
+        call, conv, _ = phone(db)
+        proof = turn(db, call, conv, 0, 'voicemail', warning=False)
+        call_id = call.id
+
+    monkeypatch.setattr(semantic_runtime, 'interpret', lambda current, redis: proof)
+    semantic_runtime.prefetch(call_id, proof.source_id)
+    semantic_runtime.prefetch(call_id, proof.source_id)
+    assert len(sent) == 1
+    assert '9 1 9 8 7 6 5 4 3 2 1 0' in sent[0]

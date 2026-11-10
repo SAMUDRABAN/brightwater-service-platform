@@ -264,3 +264,29 @@ def test_an_old_history_question_cannot_supply_current_identity_question_evidenc
              identity_question_quote='Am I speaking with Helen Price?')
         assert conv.execute(db, 'confirm_identity', {}, 'wrong-question')['verified'] is False
         assert not call.identity_verified
+
+
+def test_opt_out_backstop_saves_suppression_before_requesting_spoken_close(monkeypatch):
+    from brightwater import services as svc
+    from brightwater.managed import semantic_runtime
+    from brightwater.managed.closing import OPT_OUT
+
+    monkeypatch.setattr(settings(), 'managed_phone_enabled', True)
+    stopped = []
+
+    def stop(call_id, *, closing_message):
+        with session() as db:
+            call = db.get(m.Call, call_id)
+            destination = db.get(m.Destination, call.destination_id)
+            assert call.outcome == 'Do not call'
+            assert svc.suppressed(db, call.customer_id, destination.phone)
+        stopped.append(closing_message)
+
+    monkeypatch.setattr(semantic_runtime, 'stop_carrier', stop)
+    with session() as db, db.begin():
+        call, _, _ = phone(db)
+        source = event(db, call, 'user_utterance', now(), source='plivo_elevenlabs_observer',
+                       text='Please stop calling me', speech_timing_verified=True)
+        call_id, event_id = call.id, source.id
+    semantic_runtime.prefetch(call_id, event_id)
+    assert stopped == [OPT_OUT]

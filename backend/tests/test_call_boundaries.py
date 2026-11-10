@@ -183,7 +183,11 @@ def test_graceful_boundary_stops_provider_drains_input_and_retains_playout_proof
     asyncio.run(scenario())
 
 
-def test_farewell_uses_current_owned_voice_and_bounds_audio_without_business_evidence():
+@pytest.mark.parametrize("message", [
+    "I’ve taken this number off our calling list. Thank you. Goodbye.",
+    "This is Brightwater’s automated assistant. Please call our office. Thank you.",
+])
+def test_farewell_uses_current_owned_voice_and_bounds_audio_without_business_evidence(message):
     async def scenario():
         requested = []
         def response(request):
@@ -198,8 +202,10 @@ def test_farewell_uses_current_owned_voice_and_bounds_audio_without_business_evi
             async def wait_for_playout(self): return SimpleNamespace(interrupted=False)
         output = Output()
         async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as http:
-            assert await farewell(http, 'synthetic', 'agent_owned', output)
+            assert await farewell(http, 'synthetic', 'agent_owned', output, message=message)
         assert output.samples == 1600
         assert str(requested[1].url).startswith('https://api.elevenlabs.io/v1/text-to-speech/selectedValory/stream')
+        import json
+        assert json.loads(requested[1].content)['text'] == message
         assert b'eleven_v4_turbo' in requested[1].content
     asyncio.run(scenario())

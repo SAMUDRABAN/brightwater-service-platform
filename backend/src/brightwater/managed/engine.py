@@ -124,7 +124,7 @@ class Conversation:
                 from brightwater.managed.boundaries import BOUNDARIES, stopped_message
                 if self.understanding.meaning.control in BOUNDARIES:
                     return stopped_message(self.understanding.meaning.control)
-                return {"stopped": True, "instruction": "The caller's stop/privacy request was saved. Close politely without account disclosure or further persuasion."}
+                return {"stopped": True, "opt_out": self.understanding.meaning.control == "stop_calling", "instruction": "The caller's stop/privacy request was saved. Close politely without account disclosure or further persuasion."}
         if (self.understanding and self.understanding.meaning.disposition != "none"
             and name not in {"finish_conversation", "record_followup"}):
             raise Rejected("intent_decline", "Respect the current decision. Do not offer dates or ask for another yes; close politely after recording the outcome.")
@@ -134,7 +134,7 @@ class Conversation:
             call.identity_verified = False
             call.state, call.ended_at = "finished", now()
             self.closed = True
-            result = {"stopped": True, "instruction": "Respect the stop request. Close politely; do not disclose account information."}
+            result = {"stopped": True, "opt_out": explicit_opt_out(text) and not explicit_recording_refusal(text), "instruction": "Respect the stop request. Close politely; do not disclose account information."}
         elif name == "confirm_identity" and self.trusted_phone:
             from brightwater.managed.phone import identity
             result = identity(db, call, text, understanding=self.understanding)
@@ -243,6 +243,12 @@ class Conversation:
             if self.understanding and self.understanding.meaning.control == "voicemail":
                 from brightwater.campaign import voicemail_message_configured, voicemail_result
                 if voicemail_message_configured(call):
+                    if self.trusted_phone:
+                        from brightwater.managed.semantic_runtime import finish_phone_voicemail
+                        result = finish_phone_voicemail(db, call, self.understanding)
+                        self.closed = True
+                        return {'stopped': True, 'gateway_voicemail': True,
+                                'gateway_message': result['approved_message']}
                     return voicemail_result(db, call, self.understanding)
             if self.understanding and self.understanding.meaning and self.understanding.meaning.control in BOUNDARIES:
                 if business_request(self.understanding.meaning):

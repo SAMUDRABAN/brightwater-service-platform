@@ -155,6 +155,7 @@ class ManagedPlivo:
         self.end_requested = asyncio.Event()
         self.boundary_requested = asyncio.Event()
         self.farewell = farewell
+        self.closing_message = None
         self.segments_done = asyncio.Event()
         self.segments_done.set()
         self.notice_delivered = False
@@ -398,7 +399,7 @@ class ManagedPlivo:
                     with contextlib.suppress(Exception):
                         await asyncio.wait_for(self.provider.aclose(), 2)
                     if self.farewell:
-                        played = await asyncio.wait_for(self.farewell(), 12)
+                        played = await asyncio.wait_for(self.farewell(), 28 if self.closing_message else 12)
                 except Exception:
                     # A lost provider/line cannot guarantee an audible goodbye.
                     # Still stop resource use rather than continuing indefinitely.
@@ -467,8 +468,11 @@ async def run_managed_phone(app, context, cfg, transport, event):
                               max_seconds=max(1, int(context["max_seconds"])))
         from brightwater.managed.closing import farewell
         async def close_politely():
-            return await farewell(app.state.http, cfg.elevenlabs_api_key.get_secret_value(),
-                                  details['agent_id'], transport.audio_output)
+            from brightwater.managed.boundaries import CLOSING
+            key = cfg.managed_closing_api_key.get_secret_value() or cfg.elevenlabs_api_key.get_secret_value()
+            return await farewell(app.state.http, key,
+                                  details['agent_id'], transport.audio_output,
+                                  message=bridge.closing_message or CLOSING)
         bridge.farewell = close_politely
         app.state.active_bridges[context['call_id']] = bridge
         try:

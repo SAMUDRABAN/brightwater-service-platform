@@ -54,6 +54,7 @@ class GatewaySettings(BaseSettings):
     runtime_token: SecretStr
     openai_api_key: SecretStr = SecretStr("")
     elevenlabs_api_key: SecretStr = SecretStr("")
+    managed_closing_api_key: SecretStr = SecretStr("")
     voice_stt_model: str = "gpt-4o-mini-transcribe"
     voice_llm_model: str = "gpt-4.1-mini"
     voice_tts_model: str = "eleven_v4_turbo"
@@ -111,6 +112,7 @@ class StopCall(BaseModel):
     model_config = ConfigDict(extra="forbid")
     call_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
     polite: bool = False
+    closing_message: SecretStr | None = Field(default=None, min_length=1, max_length=400)
 
 
 class State:
@@ -310,10 +312,11 @@ def create_app(cfg):
             return {"stopped": True, "already_ended": True}
         if await app.state.redis.get("voice:active") != body.call_id.encode() or not context.get("call_uuid") or not context.get("answer_verified"):
             raise HTTPException(409)
-        bridge = getattr(app.state, 'active_bridges', {}).get(body.call_id) if body.polite else None
+        bridge = getattr(app.state, 'active_bridges', {}).get(body.call_id) if body.polite or body.closing_message else None
         if not await app.state.redis.set("voice:stop:" + body.call_id, "requested", nx=True, ex=86400):
             return {"stopped": False, "already_requested": True}
         if bridge is not None:
+            bridge.closing_message = body.closing_message.get_secret_value() if body.closing_message else None
             bridge.boundary_requested.set()
             return {'stopped': False, 'polite_closing_requested': True}
         try:

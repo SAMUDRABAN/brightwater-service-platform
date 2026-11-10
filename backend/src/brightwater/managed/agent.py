@@ -64,6 +64,19 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
         raise ValueError("Unknown voice quality profile")
     quality = quality or {}
     prompt = Path(__file__).with_name("prompt.txt").read_text()
+    if phone:
+        start = prompt.index("When you hear a real voicemail")
+        stop = prompt.index(" For a current keypad menu", start)
+        prompt = prompt[:start] + (
+            "When you hear a voicemail greeting, call finish_conversation immediately and wait silently. "
+            "The phone gateway plays any approved message and hangs up. Never say goodbye, play a message "
+            "yourself or invoke end_call for voicemail. When someone asks never to be called again, "
+            "wait silently for the gateway to acknowledge suppression and hang up. "
+            "If they refuse recording, stop immediately."
+        ) + prompt[stop:]
+        start = prompt.index(" For an approved voicemail message")
+        stop = prompt.index(" No menu navigation", start)
+        prompt = prompt[:start] + " For an automated menu or screening bot, wait for finish_conversation before ending." + prompt[stop:]
     if campaign:
         if not phone:
             raise ValueError("A customer campaign requires the telephone profile")
@@ -78,7 +91,7 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
                       "prompt": {"prompt": prompt, "llm": "gpt-4.1", "temperature": 0.4, "max_tokens": 300,
                                  "ignore_default_personality": True, "enable_parallel_tool_calls": False, "tools": [*tools(base_url, secret_id, profile=profile),
                                      {"type": "system", "name": "end_call",
-                                      "description": "End after the brief truthful closing for a completed task, caller goodbye, annual-service refusal or work serviced elsewhere. For an explicit refusal/serviced-elsewhere closing, a failed finish_conversation must not cause another offer or repeated write. Voicemail or automated greetings are never a caller goodbye. Call finish_conversation first and require stopped=true or finished=true. Speak any approved_message before end_call. Never end a proxy call before recording unavailability with finish_conversation. For misuse, first use finish_conversation and require stopped=true or finished=true. Never end for a complaint, service frustration, isolated swearing, assistive speech or uncertainty; finished=false means continue. Give one polite generic goodbye, with no account disclosure or invented callback.",
+                                      "description": "End after the brief truthful closing for a completed task, caller goodbye, annual-service refusal or work serviced elsewhere. For an explicit refusal/serviced-elsewhere closing, a failed finish_conversation must not cause another offer or repeated write. Voicemail or automated greetings are never a caller goodbye. Call finish_conversation first and require stopped=true or finished=true. Speak any approved_message before end_call. Never end a proxy call before recording unavailability with finish_conversation. For misuse, first use finish_conversation and require stopped=true or finished=true. Never end for a complaint, service frustration, isolated swearing, assistive speech or uncertainty; finished=false means continue. Give one polite generic goodbye, with no account disclosure or invented callback." + (" Never invoke this tool for voicemail or an opt-out. The phone gateway owns those closings." if phone else ""),
                                       "params": {"system_tool_type": "end_call"}}],
                                  "timezone": "Europe/London",
                                  "knowledge_base": [{"type": "text", "id": knowledge_id, "name": "Brightwater approved business facts", "usage_mode": "prompt"}] if knowledge_id else []}},

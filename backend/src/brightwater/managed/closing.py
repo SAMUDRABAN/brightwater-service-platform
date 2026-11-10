@@ -5,8 +5,10 @@ from livekit import rtc
 
 from brightwater.managed.boundaries import CLOSING
 
+OPT_OUT = "I’ve taken this number off our calling list. Thank you. Goodbye."
 
-async def farewell(http, key, agent_id, output):
+
+async def farewell(http, key, agent_id, output, *, message=CLOSING):
     # Resolve the actual owned phone profile, never a stale legacy voice default
     # or a caller/model-supplied voice. Normal conversations never call this path.
     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', agent_id):
@@ -21,15 +23,16 @@ async def farewell(http, key, agent_id, output):
         raise ValueError('Invalid configured voice')
     # Use the owned profile's current voice/model. This single neutral goodbye
     # is operational audio, never business readback or customer-consent evidence.
+    max_audio_seconds = 8 if message == CLOSING or message == OPT_OUT else 20
     async with http.stream('POST', 'https://api.elevenlabs.io/v1/text-to-speech/' + voice + '/stream',
         headers=headers, params={'output_format': 'pcm_16000'}, timeout=5,
-        json={'text': CLOSING, 'model_id': tts['model_id'],
+        json={'text': message, 'model_id': tts['model_id'],
               'voice_settings': {k: tts[k] for k in ('stability', 'similarity_boost', 'speed') if k in tts}}) as response:
         response.raise_for_status()
         pcm = bytearray()
         async for chunk in response.aiter_bytes():
             pcm.extend(chunk)
-            if len(pcm) > 32000 * 8:
+            if len(pcm) > 32000 * max_audio_seconds:
                 raise ValueError('Farewell exceeded audio bound')
     if not pcm or len(pcm) % 2:
         raise ValueError('Invalid farewell PCM')
