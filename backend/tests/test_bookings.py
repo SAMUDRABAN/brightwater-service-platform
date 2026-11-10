@@ -14,9 +14,10 @@ from brightwater.policy import Rejected, now
 
 
 def prepare_offer(db, call, property_ids, window_id, service="service"):
+    window = db.get(m.DiaryWindow, window_id)
     offer = m.AvailabilityOffer(call_id=call.id, expires_at=now() + timedelta(minutes=5), items=[
         {"item_id": m.uid(), "property_id": p, "service": service, "window_id": window_id,
-         "day": "2026-11-16", "period": "MORNING", "engineer_id": "dan"} for p in property_ids])
+         "day": window.day.isoformat(), "period": window.period, "engineer_id": window.engineer_id} for p in property_ids])
     db.add(offer)
     db.flush()
     tenants = [s.Tenant(property_id=p, name="Assessment tenant", phone="+447911111111") for p in property_ids]

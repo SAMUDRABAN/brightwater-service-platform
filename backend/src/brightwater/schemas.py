@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -48,6 +48,10 @@ class ServiceItem(Strict):
 
 class AvailabilityInput(Strict):
     items: list[ServiceItem] = Field(min_length=1, max_length=20)
+    preferred_day: date | None = None
+    preferred_period: Literal["MORNING", "AFTERNOON"] | None = None
+    engineer_id: str | None = Field(default=None, max_length=40)
+    after_day: date | None = None
 
 
 class Tenant(Strict):

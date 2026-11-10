@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import httpx
-
 from brightwater.managed.quality import PRONUNCIATION_RULES, native_tests
 
 p = argparse.ArgumentParser()

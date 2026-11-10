@@ -89,7 +89,7 @@ def native_tests(tool_ids):
             'chat_history': [turn('agent', "Hi, I'm Alex, Brightwater's AI assistant. This is a recorded engineering test with fictional details. Am I speaking with Helen Price?", 0), turn('user', reply, 8)],
             'tool_call_parameters': {'referenced_tool': {'id': tool_ids['finish_conversation'], 'type': 'webhook'},
                 'verify_absence': absence, 'parameters': []}})
-    return tests + concise_readback_tests(tool_ids)
+    return tests + concise_readback_tests(tool_ids) + arrangement_tests(tool_ids)
 
 
 def concise_readback_tests(tool_ids):
@@ -115,4 +115,25 @@ def concise_readback_tests(tool_ids):
             "type": "llm", "dynamic_variables": {"customer_name": name}, "chat_history": history,
             "success_condition": "Read back every address and postcode, service, date, full arrival window, total including VAT and payment to the engineer from the tool result, then ask one short question whether to book. Natural wording is welcome. Never claim it is already booked or repeat an acknowledgement. Use at most " + str(limit) + " spoken words while retaining all facts.",
             "success_examples": [], "failure_examples": []})
+    return tests
+
+
+def arrangement_tests(tool_ids):
+    tests = []
+    for key, reply, condition in [
+        ('engineer_question', 'Yeah I would. Can I choose a specific engineer, if you tell me their full names?',
+         'Answer the engineer question using actual returned facts or review_arrangement. Do not call confirm_booking, claim saved or assume the affirmative preface authorises saving. Keep the selected Monday visit; do not restart check_availability unless the caller requests a different engineer/date.'),
+        ('selection_preserved', 'What was the date and who is coming again?',
+         'Keep the current Monday morning selection. State its actual date/window and Priya Shah, or use review_arrangement to retrieve authoritative facts. Do not call check_availability, prepare_booking or confirm_booking; an information question is not a new date search or booking consent.'),
+    ]:
+        history = prepared_history(tool_ids)
+        result = json.loads(history[0]['tool_results'][0]['result_value'])
+        result['arrangement'] = {'status': 'prepared', 'saved': False, 'reserved': False,
+            'proposal_id': PROPOSAL, 'items': [{'property_id': 'BW-1041-P1', 'day': '2026-11-16',
+                'period': 'MORNING', 'engineer_id': 'priya', 'engineer_name': 'Priya Shah'}]}
+        history[0]['tool_results'][0]['result_value'] = json.dumps(result)
+        tests.append({'key': key, 'name': 'Brightwater arrangement v1 / ' + key, 'type': 'llm',
+            'dynamic_variables': {'customer_name': 'Helen Price'},
+            'chat_history': history + [turn('user', reply, 30)], 'success_condition': condition,
+            'success_examples': [], 'failure_examples': []})
     return tests

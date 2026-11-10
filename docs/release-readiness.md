@@ -110,3 +110,8 @@ No phone calls were placed. Existing 20 attempts and two engineering bookings re
 ## Call 21 latency candidate — 10 November 2026
 
 The owner-initiated twenty-first call saved a third fictional engineering booking. Connection preparation now overlaps ringing and caption analysis overlaps readback speech; actual playback/current-reply authorisation remains unchanged. The prompt/opening are shorter and 17 native ElevenLabs prompt regressions passed. 441 native backend tests passed in 113.81s, plus final focused checks. Two new regressions fail on the prior code and pass after repair. Real-model factual analysis took 1.748s initially and 0.0006s on cache hit; this is not handset latency. No new call was placed and the configured allowance remains 21/21 used. See [latency evidence and remaining concerns](call21-latency.md).
+
+
+## 10 November: call22 booking continuity
+
+See [call22-booking-continuity.md](call22-booking-continuity.md) for the actual fourth fictional booking, retained22 attempts, engineer/date preferences, shared CRM read model and successful checks. This latest entry supersedes earlier attempt-count and paused-configuration checkpoints; ordinary UK customer calling remains disabled. No further handset call was placed or authorised by this release.

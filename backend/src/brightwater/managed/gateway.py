@@ -17,7 +17,12 @@ from brightwater import models as m
 from brightwater.call_limits import ATTENDED_CALL_MAX_SECONDS, ATTENDED_SESSION_TTL_SECONDS
 from brightwater.config import settings
 from brightwater.db import engine as office_engine
-from brightwater.managed.engine import Conversation, create_evaluation, lab_engine, managed_error
+from brightwater.managed.engine import (
+    Conversation,
+    arrangement_error,
+    create_evaluation,
+    lab_engine,
+)
 from brightwater.policy import Rejected, now
 
 
@@ -304,7 +309,7 @@ def install(app, operator, scoped_call):
                         with db.begin_nested():
                             result = conv.execute(db, name, body.arguments, operation)
                     except Rejected as error:
-                        result = managed_error(error, agreement_present=bool(conv.intent and conv.intent.decision == 'confirm'))
+                        result = arrangement_error(db, db.get(m.Call, state['id']), error, agreement_present=bool(conv.intent and conv.intent.decision == 'confirm'))
                     except ValidationError:
                         result = {"error": "invalid_parameters", "instruction": "Check the selected property, offer and tenant contacts. No booking was saved.", "confirmed": False, "saved": False}
                     if result.get("error") != "evidence_pending":

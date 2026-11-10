@@ -219,12 +219,14 @@ def calls(db: DB):
 
 @app.get("/v1/calls/{call_id}", dependencies=OPERATOR)
 def call_detail(call_id: str, db: DB):
+    from brightwater.arrangements import current
     value = db.get(m.Call, call_id)
     if not value:
         raise Rejected("not_found", "Call not found", 404)
     return {**row(value, {"session_token_hash"}), "customer_name": svc.customer(db, value.customer_id).name,
             "events": [row(e) for e in db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call_id).order_by(m.CallEvent.occurred_at))],
-            "bookings": [row(b) for b in db.scalars(select(m.Booking).where(m.Booking.call_id == call_id))]}
+            "bookings": [row(b) for b in db.scalars(select(m.Booking).where(m.Booking.call_id == call_id))],
+            "arrangement": current(db, value)}
 
 
 @app.get("/v1/dashboard", dependencies=OPERATOR)
@@ -304,7 +306,7 @@ def knowledge(call: CALL, query: str = Query(min_length=1, max_length=400)):
 
 @app.post("/runtime/availability")
 def availability(body: s.AvailabilityInput, call: CALL, db: DB):
-    return svc.availability(db, call, body.items)
+    return svc.availability(db, call, body.items, preferred_day=body.preferred_day, preferred_period=body.preferred_period, engineer_id=body.engineer_id, after_day=body.after_day)
 
 
 @app.post("/runtime/bookings/prepare")

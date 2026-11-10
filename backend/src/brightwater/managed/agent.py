@@ -7,12 +7,22 @@ from brightwater.managed.quality import ASR_KEYTERMS, BACKCHANNELS, evaluation_c
 TOOL_DEFINITIONS = {
     "confirm_identity": ("Confirm the named caller from their most recent reply. Returns account only on success. Never pass a name or invented confirmation.", {}),
     "check_availability": ("Check real diary space for selected services at this caller's properties. Offer at most two options.", {"items": {"type": "array", "description": "Selected properties and services", "items": {"type": "object", "properties": {"property_id": {"type": "string"}, "service": {"type": "string", "enum": ["service", "cp12", "combined"]}}, "required": ["property_id", "service"]}}}),
+    "review_arrangement": ("Read the current call's selected proposal or saved booking from the database, including dates, price and engineer. This is read-only and never creates a reservation. Use it to answer follow-up questions or recover uncertain status; do not restart the date search unless the caller changes their choice or the selection is expired/unavailable.", {}),
     "prepare_booking": ("Prepare a selected offer, with tenant contacts for every landlord property. This is NOT a booking. Explain all returned booking facts in natural language, ask to save the arrangement and wait for the reply. Consent is interpreted in context; no special words are required.", {"offer_id": {"type": "string", "description": "ID returned by check_availability"}, "tenants": {"type": "array", "description": "Tenant contact for every landlord property; empty for homeowners", "items": {"type": "object", "properties": {"property_id": {"type": "string"}, "name": {"type": "string"}, "phone": {"type": "string"}}, "required": ["property_id", "name", "phone"]}}}),
     "confirm_booking": ("Reserve the prepared booking only AFTER speaking every prepared fact and receiving present authorisation for that arrangement, expressed in the caller's own words. Backend checks the conversation. Report success only if confirmed=true. Never retry this write after an authentication/authorization error (401/403) or a non-retryable failure; that is not a request for another customer yes. An evidence_pending result permits one retry only.", {"proposal_id": {"type": "string", "description": "ID from prepare_booking"}}),
     "cancel_arrangement": ("Cancel the current prepared or saved arrangement when the caller asks. Use the proposal ID from this conversation; never guess a historical appointment. Backend independently interprets the latest request.", {"proposal_id": {"type": "string", "description": "Current proposal ID from prepare_booking"}}),
     "record_followup": ("Record a requested callback, complaint, urgent problem, emergency advice or quote interest. A refusal is never a callback request. Do not claim a live transfer or promise when someone will call.", {"kind": {"type": "string", "enum": ["callback", "complaint", "urgent", "gas_emergency", "co_alarm", "lead"]}}),
     "finish_conversation": ("Finish after a brief truthful closing. Do not infer a booking or callback; backend facts determine outcome.", {}),
 }
+
+
+OPTIONAL_ARGUMENTS = {"check_availability": {"preferred_day", "preferred_period", "engineer_id", "after_day"}}
+TOOL_DEFINITIONS["check_availability"][1].update({
+    "preferred_day": {"type": "string", "description": "Optional requested UK calendar date, YYYY-MM-DD, interpreted from the conversation using reference_uk_date. Omit if no date preference."},
+    "preferred_period": {"type": "string", "enum": ["MORNING", "AFTERNOON"], "description": "Optional requested arrival window. Omit when either window is acceptable."},
+    "engineer_id": {"type": "string", "description": "Optional requested engineer ID from the verified account's actual engineers list. Never invent an ID or silently substitute a different engineer."},
+    "after_day": {"type": "string", "description": "Optional exclusive YYYY-MM-DD lower bound when the customer wants later/different dates than the previously offered ones. Omit for the initial search."},
+})
 
 
 def tools(base_url=None, secret_id=None, *, profile="balanced"):
@@ -29,10 +39,10 @@ def tools(base_url=None, secret_id=None, *, profile="balanced"):
         describe(parameters)
     result = []
     for name, (description, parameters) in TOOL_DEFINITIONS.items():
-        arguments = {"type": "object", "description": "Business operation arguments", "properties": parameters, "required": list(parameters)}
+        arguments = {"type": "object", "description": "Business operation arguments", "properties": parameters, "required": [p for p in parameters if p not in OPTIONAL_ARGUMENTS.get(name, set())]}
         if base_url and secret_id:
             result.append({"type": "webhook", "name": name, "description": description,
-                "response_timeout_secs": 10, "pre_tool_speech": "force" if profile != "baseline" and name in {"check_availability", "prepare_booking"} else "off", "interruption_mode": "allow",
+                "response_timeout_secs": 10, "pre_tool_speech": "force" if profile != "baseline" and name == "check_availability" else "off", "interruption_mode": "allow",
                 "api_schema": {"url": base_url + "/v1/managed/tools/" + name, "method": "POST",
                     "request_headers": {"X-Brightwater-Provider": {"secret_id": secret_id},
                         "X-Brightwater-Session": {"variable_name": "secret__session_token"},

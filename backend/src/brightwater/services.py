@@ -134,14 +134,19 @@ def account(db, call):
     verified(call)
     c = customer(db, call.customer_id)
     properties = db.scalars(select(m.Property).where(m.Property.customer_id == c.id)).all()
-    return {"customer_id": c.id, "name": c.name, "kind": c.kind, "properties": [
+    return {"customer_id": c.id, "name": c.name, "kind": c.kind,
+            "reference_uk_date": now().astimezone(UK).date().isoformat(),
+            "engineers": [{"id": e.id, "name": e.name, "gas_registered": e.gas_registered,
+                           "bookable_services": list(SERVICES) if e.gas_registered else []}
+                          for e in db.scalars(select(m.Engineer).where(m.Engineer.active.is_(True)).order_by(m.Engineer.name))],
+            "properties": [
         {"id": p.id, "address": p.address, "boiler": p.boiler, "boiler_year": p.boiler_year,
          "obligations": [{"id": o.id, "service": o.service, "due_date": o.due_date.isoformat()} for o in db.scalars(
              select(m.Obligation).where(m.Obligation.property_id == p.id, m.Obligation.resolved.is_(False)))]}
         for p in properties]}
 
 
-def availability(db, call, items):
+def availability(db, call, items, *, preferred_day=None, preferred_period=None, engineer_id=None, after_day=None):
     verified(call)
     if len({i.property_id for i in items}) != len(items):
         raise Rejected("duplicate_property", "Select one approved service per property", 422)
@@ -150,40 +155,79 @@ def availability(db, call, items):
         prop = db.get(m.Property, item.property_id)
         if not prop or prop.customer_id != call.customer_id or item.service not in SERVICES:
             raise Rejected("invalid_service_property", "Invalid property or service", 422)
+        services_due = ["service", "cp12"] if item.service == "combined" else [item.service]
         deadlines[item.property_id] = db.scalar(select(func.min(m.Obligation.due_date)).where(
-            m.Obligation.property_id == prop.id, m.Obligation.resolved.is_(False)))
-    windows = db.scalars(select(m.DiaryWindow).join(m.Engineer).where(
+            m.Obligation.property_id == prop.id, m.Obligation.service.in_(services_due),
+            m.Obligation.resolved.is_(False)))
+    if engineer_id is not None:
+        engineer = db.get(m.Engineer, engineer_id)
+        if not engineer or not engineer.active or not engineer.gas_registered:
+            raise Rejected("engineer_unavailable", "That engineer cannot carry out these gas services. Choose an eligible active engineer from the account.", 422)
+    query = select(m.DiaryWindow).join(m.Engineer).where(
         m.Engineer.gas_registered.is_(True), m.Engineer.active.is_(True),
-        m.DiaryWindow.day >= now().astimezone(UK).date()).order_by(
-            m.DiaryWindow.day, m.DiaryWindow.period, m.DiaryWindow.engineer_id)).all()
+        m.DiaryWindow.day >= now().astimezone(UK).date())
+    for condition in [
+        m.DiaryWindow.day == preferred_day if preferred_day else None,
+        m.DiaryWindow.period == preferred_period if preferred_period else None,
+        m.DiaryWindow.engineer_id == engineer_id if engineer_id else None,
+        m.DiaryWindow.day > after_day if after_day else None,
+    ]:
+        if condition is not None:
+            query = query.where(condition)
+    windows = db.scalars(query.order_by(m.DiaryWindow.day, m.DiaryWindow.period, m.DiaryWindow.engineer_id)).all()
+    engineers = {e.id: e for e in db.scalars(select(m.Engineer).where(m.Engineer.active.is_(True)))}
+    existing_offers = list(db.scalars(select(m.AvailabilityOffer).where(
+        m.AvailabilityOffer.call_id == call.id, m.AvailabilityOffer.expires_at > now()).order_by(
+            m.AvailabilityOffer.expires_at.desc())))
+    def selection(items):
+        return [{k: i.get(k) for k in ("property_id", "service", "window_id", "day", "period", "engineer_id", "engineer_name", "engineer_requested")} for i in items]
     options = []
-    groups = sorted({(w.day, w.period) for w in windows}, key=lambda v: (v[0], v[1] == "AFTERNOON"))
-    for day, period in groups:
-        # Do not silently offer after a recorded due date. Overdue/no-space
-        # cases require an office review rather than invented suitable capacity.
-        if any(deadline is not None and day > deadline for deadline in deadlines.values()):
-            continue
-        candidates = [w for w in windows if (w.day, w.period) == (day, period)]
+    def allocate(candidates):
         remaining = {w.id: w.capacity_minutes - w.used_minutes for w in candidates}
         proposed = []
         for item in items:
             duration = SERVICES[item.service]["minutes"]
             window = next((w for w in candidates if remaining[w.id] >= duration), None)
             if not window:
-                break
+                return []
             remaining[window.id] -= duration
             proposed.append({"item_id": m.uid(), "property_id": item.property_id,
-                             "service": item.service, "window_id": window.id,
-                             "day": day.isoformat(), "period": period, "engineer_id": window.engineer_id})
-        if len(proposed) == len(items):
-            offer = m.AvailabilityOffer(call_id=call.id, items=proposed,
-                                        expires_at=now() + timedelta(minutes=5))
-            db.add(offer)
-            db.flush()
-            options.append({"offer_id": offer.id, "items": proposed})
+                "service": item.service, "window_id": window.id, "day": window.day.isoformat(),
+                "period": window.period, "engineer_id": window.engineer_id,
+                "engineer_name": engineers[window.engineer_id].name,
+                "engineer_requested": engineer_id is not None})
+        return proposed
+    for day in sorted({w.day for w in windows}):
+        if any(deadline is not None and day > deadline for deadline in deadlines.values()):
+            continue
+        day_options = []
+        for period in ("MORNING", "AFTERNOON"):
+            proposed = allocate([w for w in windows if w.day == day and w.period == period])
+            if proposed:
+                day_options.append(proposed)
+        if not day_options:
+            # Same day need not mean the same arrival window for every landlord property.
+            proposed = allocate(sorted([w for w in windows if w.day == day],
+                key=lambda w: (w.period == "AFTERNOON", w.engineer_id)))
+            if proposed:
+                day_options.append(proposed)
+        for proposed in day_options:
+            offer = next((o for o in existing_offers if selection(o.items) == selection(proposed)), None)
+            if offer is None:
+                offer = m.AvailabilityOffer(call_id=call.id, items=proposed,
+                                            expires_at=now() + timedelta(minutes=5))
+                db.add(offer)
+                db.flush()
+            options.append({"offer_id": offer.id, "items": offer.items, "reserved": False})
+            if len(options) == 2:
+                break
         if len(options) == 2:
             break
-    return {"options": options, "reason": None if options else "No suitable space in the supplied diary"}
+    return {"options": options, "reserved": False,
+            "preferences": {"day": preferred_day.isoformat() if preferred_day else None,
+                            "period": preferred_period, "engineer_id": engineer_id,
+                            "after_day": after_day.isoformat() if after_day else None},
+            "reason": None if options else "No eligible space matches the requested dates, window and engineer before the due date"}
 
 
 def prepare(db, call, offer_id, tenants):
@@ -196,15 +240,28 @@ def prepare(db, call, offer_id, tenants):
     cp12_count = sum(i["service"] == "cp12" for i in offer.items)
     items = []
     for item in offer.items:
+        window = db.get(m.DiaryWindow, item["window_id"])
+        if (not window or window.engineer_id != item["engineer_id"]
+            or window.day.isoformat() != item["day"] or window.period != item["period"]):
+            raise Rejected("offer_changed", "The offered date, window or engineer changed. Check the same requested preferences again")
+        engineer = db.get(m.Engineer, window.engineer_id)
+        if not engineer or not engineer.active or not engineer.gas_registered:
+            raise Rejected("offer_changed", "That engineer is no longer eligible; review the requested preferences")
         prop = db.get(m.Property, item["property_id"])
         tenant = contacts.get(prop.id)
         if c.kind == "landlord" and not tenant:
             raise Rejected("tenant_required", "Tenant name and phone are required for each property", 422)
         spec = SERVICES[item["service"]]
-        items.append({**item, "address": prop.address, "minutes": spec["minutes"],
+        items.append({**item, "engineer_name": engineer.name,
+                      "engineer_requested": item.get("engineer_requested", False),
+                      "address": prop.address, "minutes": spec["minutes"],
                       "price_pence": 6000 if item["service"] == "cp12" and cp12_count >= 3 else spec["price_pence"],
                       "tenant_name": tenant.name if tenant else None, "tenant_phone": tenant.phone if tenant else None})
     digest = hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest()
+    current = db.scalar(select(m.Proposal).where(m.Proposal.call_id == call.id,
+        m.Proposal.fingerprint == digest, m.Proposal.state == "prepared", m.Proposal.expires_at > now()).order_by(m.Proposal.created_at.desc()))
+    if current:
+        return current
     proposal = m.Proposal(call_id=call.id, items=items, fingerprint=digest,
                           total_pence=sum(i["price_pence"] for i in items),
                           expires_at=now() + timedelta(seconds=settings().proposal_ttl_seconds))
@@ -257,6 +314,11 @@ def reserve(db, call, proposal):
     Call/proposal must be locked by the adapter in the same transaction.
     Phone runtime uses commit(); managed evaluations use their separate adapter.
     """
+    # Serialise duplicate proposals from this call as well as shared diary capacity.
+    call = db.scalar(select(m.Call).where(m.Call.id == call.id).with_for_update())
+    if db.scalar(select(m.Booking.id).where(m.Booking.call_id == call.id,
+        m.Booking.state == "confirmed", m.Booking.proposal_id != proposal.id).limit(1)):
+        raise Rejected("booking_already_saved", "This call already saved an arrangement. Review it rather than creating another booking")
     dest = db.get(m.Destination, call.destination_id)
     if suppressed(db, call.customer_id, dest.phone):
         raise Rejected("suppressed", "Call was opted out; no new booking operation")
@@ -274,6 +336,9 @@ def reserve(db, call, proposal):
         engineer = db.get(m.Engineer, window.engineer_id) if window else None
         if not prop or prop.customer_id != call.customer_id or not engineer or not engineer.gas_registered or not engineer.active:
             raise Rejected("invalid_booking", "Property or engineer eligibility changed")
+        if (window.engineer_id != item["engineer_id"] or window.day.isoformat() != item["day"]
+            or window.period != item["period"]):
+            raise Rejected("engineer_changed", "The offered date, window or engineer assignment changed. Review this selection and obtain fresh agreement before saving")
         demand[window.id] += SERVICES[item["service"]]["minutes"]
     if any(windows[k].used_minutes + minutes > windows[k].capacity_minutes for k, minutes in demand.items()):
         raise Rejected("capacity_conflict", "That space has just been booked; check the diary again")

@@ -54,7 +54,7 @@ def prepared(monkeypatch):
     monkeypatch.setattr(gateway, "settings", lambda: cfg)
     cache = Cache()
     monkeypatch.setattr(gateway, "broker", lambda: cache)
-    url = "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_phone_fixture&token=fixture-capability"
+    url = "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_phone_fixture&conversation_signature=fixture-capability"
     return cfg, cache, url
 
 
@@ -191,3 +191,15 @@ def test_caption_warms_facts_but_cannot_authorise_a_booking(prepared, monkeypatc
         assert db.scalar(select(func.count()).select_from(m.Booking)) == 0
         assert db.get(m.Proposal, proposal_id).state == "prepared"
         assert db.scalar(select(func.count()).select_from(m.CallEvent).where(m.CallEvent.kind == "readback_completed")) == 0
+
+
+@pytest.mark.parametrize("query,valid", [
+    ("agent_id=agent_phone_fixture&conversation_signature=fixture-signature", True),
+    ("agent_id=agent_phone_fixture&token=legacy-fixture-token", True),
+    ("agent_id=agent_phone_fixture&conversation_signature=one&token=two", False),
+    ("agent_id=agent_phone_fixture&conversation_signature=one&conversation_signature=two", False),
+    ("agent_id=agent_phone_fixture", False),
+])
+def test_provider_signature_parameter_and_legacy_token_are_unambiguous(query, valid):
+    assert startup.valid_url("wss://api.elevenlabs.io/v1/convai/conversation?" + query,
+                             "agent_phone_fixture") is valid

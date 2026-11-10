@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] - 2026-11-10
+
+- Keep the selected proposal through questions and expose authoritative arrangement status to voice and CRM.
+- Honour optional calendar date, arrival-window and named engineer preferences using real diary capacity and qualifications; never silently substitute a requested engineer.
+- Return actual assigned engineers after saving; link call records directly to bookings and show proposed versus confirmed visits.
+- Reuse unchanged offers/proposals, reject assignment changes before saving, and prevent another confirmed proposal in the same call.
+- Answer information questions before treating assent as booking consent; brief questions and duplicate tool retries do not exhaust the full-readback recovery budget.
+- Disable preparation acknowledgements that could imply premature success. Retain Valory and existing interruption settings.
+- Accept the provider's current signed connection URL format for encrypted, single-use prewarming; retain fallback and admission checks.
+- Preserve native test tool IDs across provider reprovisioning. Add engineer-question and selected-date native regressions.
+
+Owner call22 saved the combined £145 visit with Priya Shah. These changes have not yet had a further handset comparison; UK customer calling remains disabled.
+
 ## 0.2.2 — 10 November 2026
 
 - Prepare an encrypted, single-use provider connection URL while an authorised phone rings, with the existing authenticated active-call gate and normal fallback.

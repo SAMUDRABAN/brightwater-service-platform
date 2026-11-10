@@ -151,19 +151,31 @@ class Conversation:
                 result = {"verified": True, "account": svc.account(db, call), "instruction": "Explain the due service and ask to arrange it now."}
             else:
                 result = {"verified": False, "instruction": "Clarify who is speaking once in natural language. Preserve the booking goal; do not invent a callback or claim identity confirmed."}
+        elif name == "review_arrangement":
+            svc.verified(call)
+            from brightwater.arrangements import current
+            result = current(db, call)
         elif name == "check_availability":
-            result = svc.availability(db, call, s.AvailabilityInput.model_validate(args).items)
-            # Do not expose engineer IDs or scheduling internals to the agent.
-            result = {"options": [{"offer_id": o["offer_id"], "items": [{k: v for k, v in i.items() if k in {"property_id", "service", "day", "period"}} for i in o["items"]]} for o in result["options"]], "reason": result["reason"]}
+            body = s.AvailabilityInput.model_validate(args)
+            result = svc.availability(db, call, body.items, preferred_day=body.preferred_day,
+                preferred_period=body.preferred_period, engineer_id=body.engineer_id, after_day=body.after_day)
+            # Actual engineer identity is a business fact; internal capacity counters stay private.
+            result = {**result, "options": [{"offer_id": o["offer_id"], "reserved": False,
+                "items": [{k: v for k, v in i.items() if k in {"property_id", "service", "day", "period", "engineer_id", "engineer_name", "engineer_requested"}} for i in o["items"]]} for o in result["options"]],
+                "instruction": "These are available offers, not saved or held bookings. Explain the actual returned engineer if asked. Preserve the caller's choice while answering questions; review_arrangement shows the current selection."}
         elif name == "prepare_booking":
             body = s.PrepareInput.model_validate(args)
+            from brightwater.arrangements import current
+            existing = current(db, call)
+            if existing["saved"]:
+                return {**existing, "confirmed": True, "instruction": "The arrangement is already saved. Review the existing booking; do not create a duplicate."}
             proposal = svc.prepare(db, call, body.offer_id, body.tenants)
             readback = readback_text(proposal)
             self.readbacks[proposal.id] = {"text": readback, "turn_index": len(self.turns)}
             postcodes = [match.group(0) for item in proposal.items
                          if (match := re.search(r"[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$", item["address"]))]
             result = {"proposal_id": proposal.id, "readback": readback, "confirmed": False,
-                      "required_postcodes": postcodes,
+                      "arrangement": current(db, call), "required_postcodes": postcodes,
                       "instruction": "Explain every returned fact including the full address and postcode, date, window, total price, VAT and payment. Natural wording is welcome. Ask whether to save it and wait for the reply; no special consent phrase is required."}
         elif name == "confirm_booking":
             if self.intent is not None:
@@ -171,6 +183,9 @@ class Conversation:
                     "proposal_id": self.intent.proposal_id, "fingerprint": self.intent.fingerprint,
                     "model": settings().managed_interpretation_model, "contract": "server_semantic_latest_reply"})
             result = self.confirm(db, call, args.get("proposal_id", ""))
+            if result.get("confirmed"):
+                from brightwater.arrangements import current
+                result["arrangement"] = current(db, call)
         elif name == "cancel_arrangement":
             from brightwater.managed.cancellation import cancel
             result = cancel(db, call, args.get("proposal_id", ""), text, self.intent, trusted_phone=self.trusted_phone)
@@ -234,7 +249,15 @@ class Conversation:
         try:
             return self._confirm(db, call, proposal_id)
         except Rejected as error:
-            if error.code in {"readback_incomplete", "confirmation_required"}:
+            previous = self.previous_agent()
+            # Count distinct substantial readback attempts, not brief questions,
+            # interruptions, or retries of the same caller turn. The save still
+            # requires the complete, current, actually heard readback.
+            attempt = len(self.turns)
+            if (error.code in {"readback_incomplete", "confirmation_required"}
+                and previous and not previous["interrupted"] and len(previous["text"].split()) >= 35
+                and recovery.get("last_failed_turn") != attempt):
+                recovery["last_failed_turn"] = attempt
                 recovery["failed_readbacks"] = recovery.get("failed_readbacks", 0) + 1
                 if recovery["failed_readbacks"] >= 2:
                     raise Rejected("booking_unavailable", "No booking was saved. Stop repeating the details or requesting another yes. Explain briefly that you cannot complete it right now; offer office help only if requested.") from None
@@ -298,7 +321,19 @@ def run_tool(conversation, name, args, tool_id):
         except ValidationError:
             return {"error": "invalid_parameters", "instruction": "Check required property, offer and tenant fields; no booking was saved.", "confirmed": False, "saved": False}
         except Rejected as error:
-            return managed_error(error, agreement_present=bool(conversation.intent and conversation.intent.decision == "confirm"))
+            return arrangement_error(db, db.get(m.Call, conversation.call_id), error, agreement_present=bool(conversation.intent and conversation.intent.decision == "confirm"))
+
+
+def arrangement_error(db, call, error, *, agreement_present=False):
+    result = managed_error(error, agreement_present=agreement_present)
+    if call.identity_verified and error.code in {"intent_question", "intent_change", "readback_incomplete", "confirmation_required", "proposal_expired", "capacity_conflict", "offer_changed", "engineer_changed", "booking_already_saved"}:
+        from brightwater.arrangements import current
+        result["arrangement"] = current(db, call)
+        if error.code in {"readback_incomplete", "confirmation_required"}:
+            result["instruction"] = "Nothing was saved. Preserve the selected arrangement. Answer outstanding questions first, then give one complete concise readback and await a fresh reply. Do not search for new dates or ask for special words."
+        elif error.code == "intent_question":
+            result["instruction"] = "Answer the whole question from these actual arrangement facts first. Keep the selected date; do not search again or save until the caller has heard the full current details and authorises them."
+    return result
 
 
 def managed_error(error, *, agreement_present=False):
@@ -314,5 +349,5 @@ def managed_error(error, *, agreement_present=False):
     else:
         instruction = error.message
     return {"error": error.code, "confirmed": False, "saved": False,
-            "retryable": not unavailable, "customer_confirmation_needed": not (unavailable or pending),
+            "retryable": not unavailable, "customer_confirmation_needed": not (unavailable or pending) and error.code in {"readback_incomplete", "confirmation_required"},
             "caller_agreed": agreement_present, "instruction": instruction}

@@ -23,10 +23,13 @@ def valid_url(value, agent_id):
         return False
     url = urlparse(value)
     query = parse_qs(url.query)
+    credentials = [name for name in ("conversation_signature", "token") if name in query]
+    authenticated = (len(credentials) == 1 and len(query[credentials[0]]) == 1
+                     and bool(query[credentials[0]][0]))
     return (url.scheme == "wss" and url.hostname == "api.elevenlabs.io"
             and url.path == "/v1/convai/conversation" and not url.username and not url.password
             and url.port in {None, 443} and query.get("agent_id") == [agent_id]
-            and len(query.get("token", [])) == 1 and bool(query["token"][0]))
+            and authenticated)
 
 
 def consume(redis, call_id, cfg):

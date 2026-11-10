@@ -35,7 +35,7 @@ def test_private_provider_config_and_real_tools():
     assert body["platform_settings"]["auth"]["enable_auth"] is True
     assert body["conversation_config"]["tts"]["model_id"] == "eleven_v4_turbo"
     assert body["platform_settings"]["call_limits"]["bursting_enabled"] is False
-    assert len(body["conversation_config"]["agent"]["prompt"]["tools"]) == 8
+    assert len(body["conversation_config"]["agent"]["prompt"]["tools"]) == 9
     assert body["conversation_config"]["agent"]["prompt"]["knowledge_base"][0]["id"] == "public-business-document"
 
 
@@ -166,7 +166,7 @@ def test_native_history_is_structured_evidence_not_a_model_argument():
 def test_native_tools_bind_provider_session_and_system_history():
     body = config("facts", "https://api.example.test", "dedicated-provider-secret-id")
     tools = body["conversation_config"]["agent"]["prompt"]["tools"]
-    assert len([t for t in tools if t["type"] == "webhook"]) == 7
+    assert len([t for t in tools if t["type"] == "webhook"]) == 8
     assert tools[-1]["params"]["system_tool_type"] == "end_call"
     headers = tools[0]["api_schema"]["request_headers"]
     assert headers["X-Brightwater-Provider"] == {"secret_id": "dedicated-provider-secret-id"}

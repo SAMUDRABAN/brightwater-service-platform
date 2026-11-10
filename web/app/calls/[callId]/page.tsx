@@ -33,6 +33,20 @@ type Detail = {
       source?: string;
     };
   }[];
+  arrangement: {
+    status: string;
+    saved: boolean;
+    total_pence?: number;
+    items: {
+      property_id: string;
+      address: string;
+      service: string;
+      day: string;
+      period: string;
+      engineer_name: string | null;
+      assignment_changed?: boolean;
+    }[];
+  };
   bookings: { id: string; state: string; total_pence: number }[];
 };
 export default async function CallPage({ params }: { params: Promise<{ callId: string }> }) {
@@ -129,6 +143,69 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
           )}
         </div>
       </section>
+      {call.arrangement?.items.length > 0 && (
+        <section className="panel">
+          <PanelHeading
+            title={call.arrangement.saved ? "Confirmed arrangement" : "Selected arrangement"}
+          >
+            <Status tone={call.arrangement.saved ? "success" : "neutral"}>
+              {(
+                {
+                  prepared: "Awaiting confirmation",
+                  expired: "Selection expired",
+                  not_booked: "Not booked",
+                  confirmed: "Booked",
+                  cancelled: "Cancelled",
+                } as Record<string, string>
+              )[call.arrangement.status] || "Not booked"}
+            </Status>
+          </PanelHeading>
+          <div className="panel-body">
+            <p className="muted">
+              {call.arrangement.saved
+                ? "Saved in the diary. The engineers below are assigned to these visits."
+                : "These details were discussed but are not a confirmed reservation. No diary capacity is held."}
+            </p>
+            {call.arrangement.items.map((item) => (
+              <dl className="call-detail-summary" key={item.property_id}>
+                <div>
+                  <dt>Property</dt>
+                  <dd>{item.address}</dd>
+                </div>
+                <div>
+                  <dt>Visit</dt>
+                  <dd>
+                    {gbDate(item.day + "T12:00:00Z")} ·{" "}
+                    {item.period === "MORNING" ? "08:00–12:00" : "12:00–17:00"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{call.arrangement.saved ? "Assigned engineer" : "Proposed engineer"}</dt>
+                  <dd>
+                    {item.engineer_name || "Needs review"}
+                    {item.assignment_changed && " · Diary changed; recheck required"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Service</dt>
+                  <dd>
+                    {(
+                      {
+                        service: "Boiler service",
+                        cp12: "Gas safety check",
+                        combined: "Service and gas safety check",
+                      } as Record<string, string>
+                    )[item.service] || item.service}
+                  </dd>
+                </div>
+              </dl>
+            ))}
+            <p>
+              <strong>{money(call.arrangement.total_pence || 0)} including VAT</strong>
+            </p>
+          </div>
+        </section>
+      )}
       {call.bookings?.length > 0 && (
         <section className="panel">
           <PanelHeading title="Saved bookings" count={call.bookings.length} />
@@ -137,7 +214,7 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
               <div className="obligation" key={b.id}>
                 <Status tone={b.state === "confirmed" ? "success" : "neutral"}>{b.state}</Status>
                 <strong>{money(b.total_pence)} including VAT</strong>
-                <Link href="/bookings" className="text-link">
+                <Link href={`/bookings/${b.id}`} className="text-link">
                   View diary
                   <Icon name="arrow" size={14} />
                 </Link>

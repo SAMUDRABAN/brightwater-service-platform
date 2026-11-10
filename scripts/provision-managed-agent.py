@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 from brightwater.managed.agent import config
+from brightwater.managed.provision import retain_tools
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--state", type=Path, required=True)
@@ -25,10 +26,12 @@ key = os.environ["ELEVENLABS_API_KEY"]
 text = Path("backend/src/brightwater/managed/business-facts.txt").read_text()
 digest = hashlib.sha256(text.encode()).hexdigest()
 with httpx.Client(base_url="https://api.elevenlabs.io", headers={"xi-api-key": key}, timeout=45) as client:
+    actual_before = {}
     if state.get("agent_id"):
         existing = client.get("/v1/convai/agents/" + state["agent_id"])
         existing.raise_for_status()
         assert existing.json()["name"].startswith("Brightwater Managed Candidate"), "Refusing to change another agent"
+        actual_before = existing.json()
     if state.get("knowledge_sha256") != digest:
         response = client.post("/v1/convai/knowledge-base/text", json={"name": "Brightwater approved business facts", "text": text})
         response.raise_for_status()
@@ -43,6 +46,9 @@ with httpx.Client(base_url="https://api.elevenlabs.io", headers={"xi-api-key": k
         os.chmod(args.state, 0o600)
     resources = {"dictionary": quality.get("dictionary"), **quality.get("agents", {}).get(state.get("agent_id"), {})}
     body = config(state["knowledge_id"], args.api_url.rstrip("/"), state["provider_secret_id"], phone=args.phone, quality=resources, profile=args.profile)
+    prompt = body["conversation_config"]["agent"]["prompt"]
+    prompt["tool_ids"] = retain_tools(client, actual_before, [t for t in prompt["tools"] if t["type"] == "webhook"])
+    prompt["tools"] = [t for t in prompt["tools"] if t["type"] != "webhook"]
     if state.get("selected_voice_id"):
         body["conversation_config"]["tts"]["voice_id"] = state["selected_voice_id"]
     if state.get("agent_id"):
