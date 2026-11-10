@@ -494,6 +494,9 @@ def finalise(db, call, summary):
     facts.update(mapping[k] for k in kinds if k in mapping)
     if db.scalar(select(m.Booking.id).where(m.Booking.call_id == call.id, m.Booking.state == "confirmed")):
         facts.add("Booked")
+    if summary == "Call ended without a completed arrangement. Review the recorded details where available.":
+        summary = ("A confirmed booking is saved in the diary. Review its visit details and the recording below."
+                   if "Booked" in facts else "No confirmed booking remains for this call. Review its follow-ups and recording where available.")
     dest = db.get(m.Destination, call.destination_id)
     if suppressed(db, call.customer_id, dest.phone):
         facts.add("Do not call")

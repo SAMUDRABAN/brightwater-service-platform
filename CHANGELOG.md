@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-11-10
+
+- Derive the automatic call-end summary from the actual saved booking, preventing a contradictory “no arrangement” summary beside a confirmed reservation. Preserve specific staff/provider summaries.
+- Reconcile the legacy automatic summary only where an actual confirmed booking exists, retaining its prior text in an audit event. No booking, transcript or outcome is changed.
+
 ## [0.3.0] - 2026-11-10
 
 - Keep the selected proposal through questions and expose authoritative arrangement status to voice and CRM.

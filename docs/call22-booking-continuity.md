@@ -33,3 +33,7 @@ Call22 used the fallback connection URL request: the provider now returns `conve
 ## Limits
 
 No claim of instantaneous replies, human equivalence or full production qualification. The real phone integration still includes hosted language/tool round trips and India–London network travel. The latest fixes require a separately authorised attended handset comparison. UK route/recipient, complete assessment-specific call artefacts, independent voice/conversation ratings and remaining operational release gates are still outstanding. Ordinary UK campaign dialing remains off;22/22 authorised engineering attempts are used.
+
+## Visual check correction (0.3.1)
+
+The authenticated server-render inspection found a legacy automatic summary saying no arrangement was completed despite the saved booking. Call finalisation now derives that fallback from actual booking facts. The existing recorded fallback is reconciled only for calls with a confirmed booking, with an audit event retaining the previous text; specific staff summaries, transcripts, outcomes and reservations are preserved. This repair changes no provider prompt or audio settings.
