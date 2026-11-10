@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 10 November 2026
+
+- Permit a configured twenty-first attended engineering attempt after explicit owner authorisation. The deployed private allowance determines actual admission; historical attempts are preserved.
+- The owner initiates the additional test through the CRM. UK campaign controls and approved-recipient restrictions remain unchanged.
+
 ## 0.2.0 — 10 November 2026
 
 ### Added

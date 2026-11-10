@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     engineering_recipient: SecretStr = SecretStr("")
     engineering_consent_reference: str = ""
     engineering_display_name: str = "Samudra"
-    engineering_call_limit: int = Field(default=3, ge=1, le=20)
+    engineering_call_limit: int = Field(default=3, ge=1, le=21)
     managed_interpretation_model: Literal["gpt-4.1", "gpt-4.1-mini"] = "gpt-4.1"
     managed_enabled: bool = False
     managed_evaluation_request_limit: int = Field(default=10, ge=1, le=20)
