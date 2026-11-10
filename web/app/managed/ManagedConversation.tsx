@@ -3,7 +3,7 @@ import { Conversation as ElevenConversation, type Conversation } from "@elevenla
 import { useEffect, useRef, useState } from "react";
 import { startManaged, closeManaged } from "./actions";
 
-type Line = { role: string; text: string; id?: number };
+type Line = { role: string; text: string; id?: number; interrupted?: boolean };
 export default function ManagedConversation({
   enabled,
   customers,
@@ -70,6 +70,16 @@ export default function ManagedConversation({
               ? current.map((line) => (line.id === event_id ? next : line))
               : [...current, next];
           }),
+        onAgentResponseCorrection: ({ original_agent_response, corrected_agent_response }) =>
+          setLines((current) => {
+            const index = current.findLastIndex(
+              (line) => line.role === "Alex" && line.text === original_agent_response,
+            );
+            if (index < 0) return current;
+            return current.map((line, i) =>
+              i === index ? { ...line, text: corrected_agent_response, interrupted: true } : line,
+            );
+          }),
         onModeChange: ({ mode }) => {
           if (!textOnly)
             setState(mode === "speaking" ? "Alex is speaking · you can interrupt" : "Listening");
@@ -121,11 +131,17 @@ export default function ManagedConversation({
         </button>
       </div>
       <p role="status">{enabled ? state : "The managed candidate is not available yet."}</p>
+      {active && !textMode && (
+        <p>
+          For a booking, wait for Alex to finish reading the details and for Listening to appear
+          before confirming.
+        </p>
+      )}
       <div aria-live="polite" aria-label="Conversation transcript">
         {lines.map((line, i) => (
           <p key={i}>
             <strong>{line.role}: </strong>
-            {line.text}
+            {line.text} {line.interrupted && <em>(interrupted)</em>}
           </p>
         ))}
       </div>

@@ -225,7 +225,8 @@ def test_completed_booking_cannot_turn_into_a_reported_failure_on_tool_retry():
         assert db.scalar(select(func.count()).select_from(m.Booking)) == 1
 
 
-def test_browser_voice_booking_uses_office_capacity_and_records_outcome():
+@pytest.mark.parametrize("interrupted_attempts", [0, 1, 2])
+def test_browser_voice_booking_uses_office_capacity_and_records_outcome(interrupted_attempts):
     from brightwater import services as svc
     from brightwater.managed.engine import create_diary_simulation
     from brightwater.managed.understanding import SpokenFacts, SpokenItem
@@ -256,6 +257,28 @@ def test_browser_voice_booking_uses_office_capacity_and_records_outcome():
         period = (8, 12) if item["period"] == "MORNING" else (12, 17)
         details = f"Boiler service at {prop.address} on {item['day']}, between {period[0]} and {period[1]}."
         question = "Would you like me to reserve that visit?"
+        import json
+
+        from brightwater.managed.gateway import conversation_from_history
+
+        for index in range(interrupted_attempts):
+            history = {"x-elevenlabs-history": True, "entries": [
+                {"role": turn["role"], "message": turn["text"]} for turn in conv.turns
+            ] + [
+                {"role": "agent", "message": f"Just to confirm: {prop.address} ..."},
+                {"role": "user", "message": "Yeah, yes, just book it."},
+            ]}
+            restored = conversation_from_history(call.id, False, json.dumps(history), {"storage": "shared"})
+            restored.readbacks = conv.readbacks
+            bind(db, restored, appointment="confirm")
+            code = "browser_readback_interrupted" if index == 0 else "booking_unavailable"
+            with pytest.raises(Rejected) as rejected:
+                restored.execute(db, "confirm_booking", {"proposal_id": proposal.id}, f"interrupted-{index}")
+            assert rejected.value.code == code
+            assert window.used_minutes == occupied
+            conv = restored
+        if interrupted_attempts == 2:
+            return
         conv.agent(f"{details} You would pay the engineer £95, including VAT. {question}")
         conv.user("Go ahead")
         facts = SpokenFacts(unambiguous=True, items=[SpokenItem(address="18 Albert Road, Southsea",

@@ -94,7 +94,7 @@ def conversation_from_history(call_id, text_only, raw, state):
             conv.user(text)
         elif role == "agent":
             conv.agent(text)
-            if entry.get("interrupted") is True:
+            if entry.get("interrupted") is True or (state.get("storage") == "shared" and text.rstrip().endswith(("...", "…"))):
                 conv.interrupt()
     conv.readbacks = state.get("readbacks", {})
     return conv

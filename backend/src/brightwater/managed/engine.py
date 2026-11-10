@@ -350,9 +350,9 @@ class Conversation:
             # interruptions, or retries of the same caller turn. The save still
             # requires the complete, current, actually heard readback.
             attempt = len(self.turns)
-            if (error.code in {"readback_incomplete", "confirmation_required"}
-                and previous and not previous["interrupted"] and len(previous["text"].split()) >= 35
-                and recovery.get("last_failed_turn") != attempt):
+            incomplete = (error.code in {"readback_incomplete", "confirmation_required"}
+                          and previous and not previous["interrupted"] and len(previous["text"].split()) >= 35)
+            if (incomplete or error.code == "browser_readback_interrupted") and recovery.get("last_failed_turn") != attempt:
                 recovery["last_failed_turn"] = attempt
                 recovery["failed_readbacks"] = recovery.get("failed_readbacks", 0) + 1
                 if recovery["failed_readbacks"] >= 2:
@@ -383,6 +383,10 @@ class Conversation:
             raise Rejected("managed_audio_unqualified", "Voice booking confirmation is not qualified; use the text evaluation to validate booking integration")
         user = self.latest_user()
         previous = self.previous_agent()
+        if (call.purpose == "browser_simulation" and expected and previous and previous["interrupted"]
+            and self.turns.index(previous) >= expected.get("turn_index", len(self.turns))):
+            raise Rejected("browser_readback_interrupted",
+                "The booking details were cut off before they finished. The booking is not saved.")
         if (not expected or "turn_index" not in expected or not user or not previous or self.turns[-1] is not user
             or previous["interrupted"] or not self.intent.confirms(call.id, proposal, user["text"])
             or not semantic_readback(self.understanding, proposal, previous["text"])
@@ -433,10 +437,18 @@ def parameter_error(error):
 
 def arrangement_error(db, call, error, *, agreement_present=False):
     result = managed_error(error, agreement_present=agreement_present)
-    if call.identity_verified and error.code in {"intent_question", "intent_change", "readback_incomplete", "confirmation_required", "proposal_expired", "capacity_conflict", "offer_changed", "engineer_changed", "booking_already_saved"}:
+    if call.identity_verified and error.code in {"intent_question", "intent_change", "readback_incomplete", "confirmation_required", "browser_readback_interrupted", "proposal_expired", "capacity_conflict", "offer_changed", "engineer_changed", "booking_already_saved"}:
         from brightwater.arrangements import current
         result["arrangement"] = current(db, call)
-        if error.code in {"readback_incomplete", "confirmation_required"}:
+        if error.code == "browser_readback_interrupted":
+            proposal = db.scalar(select(m.Proposal).where(m.Proposal.call_id == call.id,
+                m.Proposal.state == "prepared").order_by(m.Proposal.created_at.desc()).limit(1))
+            if proposal:
+                result["readback"] = readback_text(proposal)
+            result["instruction"] = ("Say: ‘The booking details were cut off. Please wait until I finish the question, then answer.’ "
+                "Then say the returned readback exactly once, including the arrival hours and payment, and wait for a new reply. "
+                "Do not offer new dates or treat the earlier yes as permission.")
+        elif error.code in {"readback_incomplete", "confirmation_required"}:
             result["instruction"] = "Nothing was saved. Preserve the selected arrangement. Answer outstanding questions first, then give one complete concise readback and await a fresh reply. Do not search for new dates or ask for special words."
         elif error.code == "intent_question":
             result["instruction"] = "Answer the whole question from these actual arrangement facts first. Keep the selected date; do not search again or save until the caller has heard the full current details and authorises them."
@@ -456,5 +468,5 @@ def managed_error(error, *, agreement_present=False):
     else:
         instruction = error.message
     return {"error": error.code, "confirmed": False, "saved": False,
-            "retryable": not unavailable, "customer_confirmation_needed": not (unavailable or pending) and error.code in {"readback_incomplete", "confirmation_required"},
+            "retryable": not unavailable, "customer_confirmation_needed": not (unavailable or pending) and error.code in {"readback_incomplete", "confirmation_required", "browser_readback_interrupted"},
             "caller_agreed": agreement_present, "instruction": instruction}
