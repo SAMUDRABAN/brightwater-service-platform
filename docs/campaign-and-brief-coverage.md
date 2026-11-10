@@ -45,7 +45,7 @@ Gas guidance was checked against [SGN's official gas emergency advice](https://w
 
 Customer calling remains off. No assessment sample number, tenant, new customer or additional owner test is dialed by this release. The successful-booking close remains short; the optional old-boiler question occurs before the final readback and fresh booking consent. The live India transport and selected Valory/model/ASR/turn settings are preserved. The separate native campaign profile has no phone number assigned automatically.
 
-Before activation: supply and qualify the real UK carrier/caller ID, gateway and office callback; register an owned/consented UK handset; verify real customer/diary authority and the office text process; approve quote-age and spending assumptions; complete the required physical scenario artefacts and latency/voice/conversation evaluation. Configuration checks are not carrier qualification. See release-readiness.md for the broader release gates.
+Before activation: supply and qualify the real UK carrier/caller ID, gateway and office callback; register an owned/consented UK handset; verify real customer/diary authority and the office text process; approve quote-age and spending assumptions; complete the required physical scenario artefacts and latency/voice/conversation evaluation. Follow the [UK route qualification checklist](uk-route-qualification.md) for the carrier test and attended pilot. See [release readiness](release-readiness.md) for the broader release gates.
 
 ## Recorded engineering checks
 

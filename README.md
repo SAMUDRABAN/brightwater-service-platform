@@ -12,7 +12,7 @@ The latest attended test exposed unnecessary homeowner tenant validation. The ad
 
 ## Automatic reminders
 
-The server-side campaign now selects upcoming 28-day reminders, prioritises landlords and dispatches through a separately gated native ElevenLabs UK route. Redis/Celery/Beat handle durable scheduling and retries; the active conversation keeps its direct tool/database path. The CRM Call controls page shows due counts and activation blockers. Customer calling is still paused until a real UK route/caller ID and office callback are qualified. The India route remains attended-test only; no new calls are authorised by this release. [Brief coverage and checks](docs/campaign-and-brief-coverage.md).
+The server-side campaign now selects upcoming 28-day reminders, prioritises landlords and dispatches through a separately gated native ElevenLabs UK route. Redis/Celery/Beat handle durable scheduling and retries; the active conversation keeps its direct tool/database path. The CRM Call controls page shows due counts and activation blockers. Customer calling is still paused until a real UK route/caller ID and office callback are qualified. The India route remains attended-test only; no new calls are authorised by this release. [Brief coverage and checks](docs/campaign-and-brief-coverage.md) · [UK route qualification checklist](docs/uk-route-qualification.md).
 
 ## What the office does
 
