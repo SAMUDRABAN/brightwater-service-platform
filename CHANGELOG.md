@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.4] - 2026-11-11
+
+- Carry a fresh volunteered self-identification through opening playback; disclose account facts only after the actual notice completes. Keep early unbound yes, incomplete notices and changed speakers blocked. Avoid repeating a completed disclosure.
+- Share unresolved-reminder guidance across trusted telephone and evaluation identity tools. Recheck fresh identity replies rather than restarting the opening; unavailable authentication must not request another name.
+- Retain the successful call24 booking and original repeat-question evidence. No further phone call is authorised or placed by the repair.
+
 ## [0.4.3] - 2026-11-11
 
 - Prepare homeowner visits without unnecessary tenant data; retain strict landlord contact validation. Return specific field errors without raw input or unsupported availability changes.

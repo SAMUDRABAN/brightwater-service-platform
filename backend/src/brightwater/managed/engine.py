@@ -151,11 +151,8 @@ class Conversation:
             if identified:
                 call.conversation = True
                 self.event(db, call, "identity_assertion", {"evidence": text, "contract": "managed_ordered_turns"})
-                account = svc.account(db, call)
-                due = any(p['obligations'] for p in account['properties'])
-                result = {"verified": True, "account": account, "reminder_due": due,
-                    "instruction": ("Explain only the unresolved reminders actually returned, with their property and due date. Ask which work they want to arrange; do not select every property automatically."
-                        if due else "There are no unresolved reminders on this account. Do not say a service or certificate is due or invent a deadline. If the caller requests additional work, clarify its property and service before checking availability; otherwise explain briefly and close politely.")}
+                from brightwater.managed.account import identity_result
+                result = identity_result(svc.account(db, call))
             else:
                 result = {"verified": False, "instruction": "Clarify who is speaking once in natural language. Preserve the booking goal; do not invent a callback or claim identity confirmed."}
         elif name == "review_arrangement":

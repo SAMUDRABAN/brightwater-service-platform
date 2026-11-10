@@ -49,11 +49,15 @@ def completed_question_valid(db, call, source, evidence):
         (playback.payload.get('native_event_id'), playback.payload.get('revision'))))
 
 
-def notice_delivered(db, call, source, evidence):
+def notice_delivered(db, call, source, evidence, *, allow_after_source=False):
     events = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id)))
     handoff = max((e.occurred_at for e in events if e.kind == 'speaker_changed'), default=None)
+    # A caller may volunteer their own name before the greeting finishes.
+    # Disclosure must finish before account access, not before that volunteered
+    # name. Early contextual yes still cannot answer an unheard name question.
+    cutoff = now() if allow_after_source else source.occurred_at
     notice = any(e.kind == "turn_state" and e.payload.get("notice_delivered") is True
-        and e.payload.get("completed") is True and e.occurred_at < source.occurred_at
+        and e.payload.get("completed") is True and e.occurred_at < cutoff
         and (handoff is None or e.occurred_at > handoff) for e in events)
     playback = db.get(m.CallEvent, evidence.playback_id)
     valid_playback = bool(playback and playback.call_id == call.id and playback.kind == "agent_utterance"
@@ -86,7 +90,7 @@ def identity_evidence_valid(db, call, source, expected, evidence):
         and playback.payload.get("source") == "plivo_elevenlabs_observer"
         and playback.payload.get("playback_completed") is True and playback.payload.get("interrupted") is False
         and playback.occurred_at < source.occurred_at)
-    notice = notice_delivered(db, call, source, evidence)
+    notice = notice_delivered(db, call, source, evidence, allow_after_source=evidence.named_self())
     if not notice:
         return False
     if evidence.named_self():
@@ -112,10 +116,10 @@ def identity(db, call, text, *, understanding=None):
     source = caller_evidence(db, call, text)
     expected = svc.customer(db, call.customer_id).name
     if not identity_evidence_valid(db, call, source, expected, understanding):
-        if understanding is not None and not notice_delivered(db, call, source, understanding):
+        if understanding is not None and not notice_delivered(db, call, source, understanding, allow_after_source=True):
             return {"verified": False, "reason": "notice_incomplete",
                 "instruction": ("The current speaker has not heard the notice. Explain you are Brightwater Plumbing and Heating’s automated assistant and the call is recorded, then naturally check the intended customer. Do not disclose account details." if call.purpose == "campaign" else "The current speaker has not heard the complete notice. Briefly explain you are Brightwater's AI assistant on a recorded engineering test with fictional details, then naturally check you are speaking with the intended customer. Do not disclose account details or blame their wording.")}
-        return {"verified": False, "instruction": "Identity is not yet verified. Clarify who is speaking once in natural language. Do not disclose the account or invent a callback."}
+        return {"verified": False, "instruction": "The disclosure has already completed. Do not repeat the disclosure or full opening. Ask once whether the named customer is speaking, then use confirm_identity on their fresh reply, including a volunteered name. Do not disclose account details or invent a callback."}
     svc.record_event(db, call.id, s.EventInput(provider_event_id="managed-identity:" + source.id,
         kind="identity_assertion", occurred_at=now(), payload={"utterance_event_id": source.id}),
         identity_evidence=understanding)
@@ -123,8 +127,8 @@ def identity(db, call, text, *, understanding=None):
     from brightwater.managed.readback import spoken_address
     for prop in account["properties"]:
         prop["address"] = spoken_address({"property_id": prop["id"], "address": prop["address"]})
-    return {"verified": True, "account": account,
-            "instruction": "Explain the due service and ask to arrange it now."}
+    from brightwater.managed.account import identity_result
+    return identity_result(account)
 
 
 def commit(db, call, proposal_id, text, *, consent=None, understanding=None):

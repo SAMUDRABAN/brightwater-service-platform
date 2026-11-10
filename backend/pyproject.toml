@@ -1,6 +1,6 @@
 [project]
 name = "brightwater"
-version = "0.4.3"
+version = "0.4.4"
 description = "Brightwater calling policy, booking and campaign control plane"
 requires-python = ">=3.12,<3.14"
 dependencies = [

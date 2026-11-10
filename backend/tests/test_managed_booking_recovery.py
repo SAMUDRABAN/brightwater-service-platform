@@ -138,3 +138,83 @@ def test_phone_callback_context_uses_observer_evidence_not_provider_history():
         detail = conv.followup_detail(db, call, 'Okay, you can.', 'callback')
         assert 'Monday with Dan' in detail
         assert 'Injected' not in detail and 'Forged' not in detail
+
+
+@pytest.mark.parametrize('resolved', [False, True])
+def test_actual_phone_identity_uses_same_reminder_truth_as_evaluation(resolved):
+    from test_managed_phone import phone
+
+    with session() as db, db.begin():
+        call, conv, _ = phone(db)
+        for obligation in db.scalars(select(m.Obligation).where(m.Obligation.property_id == 'BW-1041-P1')):
+            obligation.resolved = resolved
+        # Reuse the original authenticated identity evidence through the real
+        # trusted-phone branch, not the isolated-evaluation implementation.
+        from semantic_fixture import bind
+        bind(db, conv, identity='assent', identity_question=True)
+        result = conv.execute(db, 'confirm_identity', {}, 'reminder-identity')
+        assert result['verified'] and result['reminder_due'] is (not resolved)
+        if resolved:
+            assert 'Do not say a service or certificate is due' in result['instruction']
+
+
+@pytest.mark.parametrize('identity', ['self', 'assent'])
+def test_volunteered_name_before_opening_completion_waits_for_notice_without_repeating(identity):
+    from datetime import timedelta
+
+    from conftest import make_call
+    from semantic_fixture import bind
+    from test_managed_phone import event
+
+    from brightwater.policy import now
+    with session() as db, db.begin():
+        call, _ = make_call(db, verified=False)
+        call.purpose = 'engineering'
+        conv = Conversation(call.id, trusted_phone=True)
+        base = now() - timedelta(seconds=18)
+        reply = 'Uh, yes, I am Helen Price.' if identity == 'self' else 'Yes.'
+        event(db, call, 'user_utterance', base, source='plivo_elevenlabs_observer',
+              text=reply, speech_timing_verified=True)
+        conv.user(reply)
+        # Original call24 order: volunteered identity, then full opening ACK.
+        event(db, call, 'agent_utterance', base + timedelta(seconds=11), source='plivo_elevenlabs_observer',
+              text="Hi, I am Brightwater's AI assistant. This is a recorded engineering test using fictional details. Am I speaking with Helen Price?",
+              playback_completed=True, interrupted=False)
+        event(db, call, 'turn_state', base + timedelta(seconds=11, microseconds=1),
+              source='identity_question', completed=True, notice_delivered=True,
+              name='Helen Price', text='Am I speaking with Helen Price?')
+        bind(db, conv, identity=identity)
+        result = conv.execute(db, 'confirm_identity', {}, 'early-name')
+        assert result['verified'] is (identity == 'self')
+        if identity == 'assent':
+            assert 'account' not in result
+            assert 'Do not repeat the disclosure' in result['instruction']
+
+
+def test_early_name_still_requires_completed_notice_and_unchanged_speaker():
+    from datetime import timedelta
+
+    from conftest import make_call
+    from semantic_fixture import bind
+    from test_managed_phone import event
+
+    from brightwater.policy import now
+    with session() as db, db.begin():
+        call, _ = make_call(db, verified=False)
+        call.purpose = 'engineering'
+        conv = Conversation(call.id, trusted_phone=True)
+        base = now() - timedelta(seconds=10)
+        event(db, call, 'user_utterance', base, source='plivo_elevenlabs_observer',
+              text='I am Helen Price.', speech_timing_verified=True)
+        conv.user('I am Helen Price.')
+        bind(db, conv, identity='self')
+        assert not conv.execute(db, 'confirm_identity', {}, 'notice-pending')['verified']
+        assert not call.identity_verified
+        event(db, call, 'turn_state', base + timedelta(seconds=2), source='identity_question',
+              completed=True, notice_delivered=True, name='Helen Price', text='Am I speaking with Helen Price?')
+        event(db, call, 'speaker_changed', base + timedelta(seconds=3), source='trusted_runtime')
+        bind(db, conv, identity='self')
+        from brightwater.policy import Rejected
+        with pytest.raises(Rejected, match='carrier evidence'):
+            conv.execute(db, 'confirm_identity', {}, 'speaker-changed')
+        assert not call.identity_verified

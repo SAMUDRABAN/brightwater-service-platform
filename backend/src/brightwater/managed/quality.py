@@ -185,6 +185,14 @@ def booking_recovery_tests(tool_ids):
             {'id': 'BW-1041-P1', 'address': '18 Albert Road, Southsea, PO4 0JT', 'obligations': []}]},
         'reminder_due': False, 'instruction': 'No unresolved reminders. Do not say a service is due. Close briefly unless the caller requests additional work.'}, 1)
     cases = [
+        ('identity_recovery', [
+            turn('agent', "Hi, I am Brightwater's AI assistant. This is a recorded engineering test with fictional details. Am I speaking with Helen Price?", 0),
+            turn('user', 'Uh yes, I am Helen Price.', 1),
+            result('confirm_identity', {'verified': False, 'reason': 'notice_incomplete',
+                'instruction': 'Complete the disclosure before account access.'}, 2),
+            turn('agent', 'This is a recorded engineering test. Could you confirm your name?', 3, interrupted=True),
+            turn('user', 'I said I am Helen Price.', 4)],
+         'The first business action must be confirm_identity for the fresh volunteered name. Do not ask another identity question, repeat the opening or disclose account details before that action. Later honest handling of missing test-session credentials is allowed and does not change the required first action.'),
         ('no_due_reminder', [identity],
          'Explain truthfully there is no outstanding reminder and close politely. Do not say any service/certificate is due, invent a deadline, start a diary search or prepare a booking.'),
         ('homeowner_contact', [identity, turn('user', 'I would like an additional boiler service at number eighteen on Monday afternoon.', 5),
