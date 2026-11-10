@@ -213,7 +213,18 @@ def booking_recovery_tests(tool_ids):
                 {'offer_id': 'quality-homeowner-offer', 'tenants': [{'property_id': 'BW-1041-P1', 'name': 'Helen Price', 'phone': ''}]})],
          'Treat this as tool-input recovery. Do not claim Monday or another date is unavailable, ask for another booking yes, request tenant contacts, or search for different dates. No saved booking claim. Corrected preparation with tenants=[] or a brief honest explanation that nothing is saved is acceptable.'),
     ]
-    return [{'key': key, 'name': 'Brightwater booking recovery v1 / ' + key, 'type': 'llm',
-        'dynamic_variables': {'customer_name': 'Helen Price'}, 'chat_history': history,
-        'success_condition': condition, 'success_examples': [], 'failure_examples': []}
-        for key, history, condition in cases]
+    tests = []
+    for key, history, condition in cases:
+        body = {'key': key, 'name': 'Brightwater booking recovery v2 / ' + key,
+            'dynamic_variables': {'customer_name': 'Helen Price'}, 'chat_history': history}
+        # Native LLM graders see the final auth-denied speech and can miss the
+        # preceding tool request. Grade action selection as a tool, not prose.
+        if key in {'identity_recovery', 'homeowner_contact', 'validation_not_capacity'}:
+            tool = 'confirm_identity' if key == 'identity_recovery' else 'prepare_booking'
+            body.update(type='tool', check_any_tool_matches=True, tool_call_parameters={
+                'referenced_tool': {'id': tool_ids[tool], 'type': 'webhook'},
+                'verify_absence': False, 'parameters': []})
+        else:
+            body.update(type='llm', success_condition=condition, success_examples=[], failure_examples=[])
+        tests.append(body)
+    return tests

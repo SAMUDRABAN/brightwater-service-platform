@@ -93,7 +93,10 @@ with httpx.Client(base_url='https://api.elevenlabs.io', headers={'xi-api-key': o
                 for call in matches:
                     args = json.loads(call['params_as_json'])
                     passed = passed and args.get('arguments', {}).get('proposal_id') == expected['expected_proposal_id']
-                if expected.get('expected_tool') in {'confirm_booking', 'cancel_arrangement'}:
+                    if expected.get('expected_offer_id'):
+                        passed = passed and args.get('arguments', {}).get('offer_id') == expected['expected_offer_id']
+                        passed = passed and args.get('arguments', {}).get('tenants', []) == []
+                if expected.get('expected_tool') in {'confirm_identity', 'prepare_booking', 'confirm_booking', 'cancel_arrangement'}:
                     passed = passed and calls[0].get('tool_name') == expected['expected_tool']
                     passed = passed and not any(call.get('tool_name') in {'confirm_booking', 'cancel_arrangement', 'record_followup'} and call not in matches for call in calls)
                 if run.get('test_name', '').startswith('Brightwater boundary'):

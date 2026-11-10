@@ -58,7 +58,8 @@ with httpx.Client(base_url='https://api.elevenlabs.io', headers={'xi-api-key': o
                 evaluation = body.get('tool_call_parameters', {})
                 expected = next((name for name, tid in tool_ids.items() if tid == evaluation.get('referenced_tool', {}).get('id')), None)
                 tests[key].update(referenced_tool_id=evaluation.get('referenced_tool', {}).get('id'), expected_tool=expected, verify_absence=evaluation.get('verify_absence', False),
-                    expected_proposal_id='quality-fixture-proposal' if expected in {'confirm_booking', 'cancel_arrangement'} and not evaluation.get('verify_absence') else None)
+                    expected_proposal_id='quality-fixture-proposal' if expected in {'confirm_booking', 'cancel_arrangement'} and not evaluation.get('verify_absence') else None,
+                    expected_offer_id='quality-homeowner-offer' if key in {'homeowner_contact', 'validation_not_capacity'} else None)
                 continue
             # Retain old test IDs rather than deleting regression evidence.
             r = c.put('/v1/convai/agent-testing/' + tests[key]['id'], json=body) if key in tests else c.post('/v1/convai/agent-testing/create', json=body)
@@ -71,7 +72,8 @@ with httpx.Client(base_url='https://api.elevenlabs.io', headers={'xi-api-key': o
             expected = next((name for name, tid in tool_ids.items() if tid == evaluation.get('referenced_tool', {}).get('id')), None)
             tests[key] = {'id': test_id, 'sha256': digest, 'referenced_tool_id': evaluation.get('referenced_tool', {}).get('id'), 'expected_tool': expected,
                 'verify_absence': evaluation.get('verify_absence', False),
-                'expected_proposal_id': 'quality-fixture-proposal' if expected in {'confirm_booking', 'cancel_arrangement'} and not evaluation.get('verify_absence') else None}
+                'expected_proposal_id': 'quality-fixture-proposal' if expected in {'confirm_booking', 'cancel_arrangement'} and not evaluation.get('verify_absence') else None,
+                'expected_offer_id': 'quality-homeowner-offer' if key in {'homeowner_contact', 'validation_not_capacity'} else None}
             save()
         active_keys = {definition['key'] for definition in definitions}
         for key, value in tests.items():
