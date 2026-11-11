@@ -361,8 +361,11 @@ def install(app, operator, scoped_call):
             if conv.trusted_phone and result.get('stopped'):
                 from brightwater.managed.closing import OPT_OUT
                 from brightwater.managed.semantic_runtime import stop_carrier
-                if result.get('gateway_voicemail') or result.get('opt_out'):
-                    stop_carrier(state['id'], closing_message=OPT_OUT if result.get('opt_out') else result.get('gateway_message'))
+                if result.get('opt_out') or result.get('gateway_message'):
+                    closing = OPT_OUT if result.get('opt_out') else result['gateway_message']
+                    if not stop_carrier(state['id'], closing_message=closing) and result.get('outcome') == 'Not interested':
+                        return {'finished': True, 'outcome': result['outcome'],
+                                'instruction': 'Say a brief polite goodbye, then use end_call. Do not offer anything else.'}
                     return {'finished': True,
                             'instruction': 'The phone gateway is closing this call. Wait without speaking or invoking end_call.'}
                 stop_carrier(state['id'], polite=bool(result.get('boundary_reason')))

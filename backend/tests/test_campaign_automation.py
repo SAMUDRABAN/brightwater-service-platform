@@ -101,6 +101,21 @@ def test_interrupted_offer_context_does_not_replace_playback_evidence(verified, 
         assert turn['completed_agent_speech'] == opening
 
 
+def test_phone_refusal_saves_outcome_and_hands_goodbye_to_carrier_gateway():
+    from test_managed_phone import event
+    with session() as db, db.begin():
+        call, conv, _ = phone(db)
+        text = 'I’ll give the annual service a miss this year, thanks.'
+        event(db, call, 'user_utterance', now(), source='plivo_elevenlabs_observer',
+              text=text, speech_timing_verified=True)
+        conv.user(text)
+        bind(db, conv, disposition='not_interested')
+
+        result = conv.execute(db, 'finish_conversation', {}, 'finish-refusal')
+        assert result['stopped'] and result['finished'] and result['gateway_message'].endswith('Goodbye.')
+        assert call.outcome == result['outcome'] == 'Not interested'
+
+
 def test_a_completed_conversation_without_saved_resolution_reaches_sarah_once():
     with session() as db, db.begin():
         call, _ = make_call(db)

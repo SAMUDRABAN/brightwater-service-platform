@@ -289,6 +289,8 @@ class Conversation:
             svc.finalise(db, call, ("Customer reminder conversation completed; outcome derives from saved database facts." if call.purpose == "campaign" else "Managed attended engineering phone conversation completed; outcome derives from saved database facts.") if self.trusted_phone else "Managed engineering evaluation completed. Business outcome derives from saved database facts; no phone call was made.")
             self.closed = True
             result = {"finished": True, "outcome": call.outcome}
+            if self.trusted_phone and call.outcome == "Not interested":
+                result.update(stopped=True, gateway_message="Of course. Thanks for your time. Goodbye.")
         else:
             raise Rejected("unknown_tool", "Unsupported managed tool", 422)
         self.results[tool_id] = result
