@@ -2,17 +2,17 @@
 
 A branded office CRM and outbound service-reminder candidate for **Brightwater Plumbing & Heating Ltd**, built for The Meraki Group assessment `TMG-TA-2611-01`.
 
-**Version 0.4.4 · engineering candidate.** Customer calling is paused. The office is deployed, 24 owner-attended engineering attempts are retained and five fictional bookings were saved. The physical tests used India; a UK route and six complete scenario-specific telephone artefacts remain qualification gates. This is not a claim of production readiness or full assessment completion.
+**Version 0.4.4 · engineering candidate.** Customer calling is paused. An attended UK call through Twilio and ElevenLabs saved a fictional £95 boiler service in the diary on 11 November 2026. The CRM holds six scenario records with transcripts, recordings and saved outcomes. See the [evidence index](docs/submission/test-evidence.md) and [remaining checks](docs/submission/assessment-coverage.md#remaining-review-and-customer-launch-checks).
 
 [Office login](https://office.46.101.11.137.sslip.io/login) · [Assessment coverage](docs/submission/assessment-coverage.md) · [Note to Mark](docs/submission/note-to-mark.md) · [Technical handover](docs/submission/written-summary.md)
 
 ## Booking recovery
 
-The latest attended test exposed unnecessary homeowner tenant validation. The adapter now omits homeowner tenant fields, returns specific validation recovery and distinguishes input failures from diary capacity. Reminder wording follows actual unresolved obligations; callback notes retain assent and business context. Call23 saved a callback, not a booking. [Repair evidence](docs/booking-recovery.md).
+An earlier attended test exposed unnecessary homeowner tenant validation. The adapter now omits homeowner tenant fields, returns specific validation recovery and distinguishes input failures from diary capacity. Reminder wording follows actual unresolved obligations; callback notes retain assent and business context. India attended attempt 23 saved an office callback after booking recovery. [Repair evidence](docs/booking-recovery.md).
 
 ## Automatic reminders
 
-The server-side campaign now selects upcoming 28-day reminders, prioritises landlords and dispatches through a separately gated native ElevenLabs UK route. Redis/Celery/Beat handle durable scheduling and retries; the active conversation keeps its direct tool/database path. The CRM Call controls page shows due counts and activation blockers. Customer calling is still paused until a real UK route/caller ID and office callback are qualified. The India route remains attended-test only; no new calls are authorised by this release. [Brief coverage and checks](docs/campaign-and-brief-coverage.md) · [UK route qualification checklist](docs/uk-route-qualification.md).
+The server-side campaign now selects upcoming 28-day reminders, prioritises landlords and dispatches through a separately gated native ElevenLabs UK route. Redis/Celery/Beat handle durable scheduling and retries; the active conversation keeps its direct tool/database path. The CRM Call controls page shows due counts and activation blockers. The UK attended route has saved a booking. Automatic customer calling stays paused pending campaign and office callback sign-off. The India route is for attended tests. [Brief coverage and checks](docs/campaign-and-brief-coverage.md) · [UK route qualification checklist](docs/uk-route-qualification.md).
 
 ## What the office does
 
@@ -36,7 +36,7 @@ Next.js office ── individual staff session ── FastAPI business API
                                                │
                             approved call intent / admission
                                                │
-                      Plivo phone network ↔ India media gateway
+                         Twilio UK gateway / Plivo India gateway
                                                │
                                 ElevenLabs native conversation
                                                │
@@ -107,9 +107,9 @@ Private caller recordings, credentials, database dumps and the original assessme
 
 ## Current boundaries
 
-- Never dial assessment drama numbers or an unconsented destination. UK campaign calling and the separate attended route have independent admission gates. The twenty-attempt allowance is exhausted; another physical attempt requires fresh authority.
-- The brief's first-voicemail message, strict outcome taxonomy for answered technical failures, six distinct scenario recordings and UK recipient requirement remain explicit gates.
-- Call 20's repeated-confirmation and call 19's unsaved office-help findings remain open. A CRM redesign does not resolve them.
+- Use a separately consented recipient for each attended test. Assessment sample numbers remain blocked. UK campaign and attended-call admission are separate.
+- The reviewer live call is a separate assessment step. First-voicemail playback, the spoken opt-out acknowledgement and treatment of unclassified answered failures still need verification or agreement.
+- The UK booking call completed identity and confirmation without a retry. Its transcript repeats the diary acknowledgement. The saved callback evidence is from booking recovery.
 - Independent voice/conversation ratings, complete end-to-end latency measurements, enterprise SSO/MFA, live-diary integration, monitoring and recovery/high-availability qualification remain work.
 
 See [release readiness](docs/release-readiness.md), [call-purpose safeguards](docs/call-purpose-boundaries.md), [changelog](CHANGELOG.md), [engineering conventions](docs/engineering-conventions.md) and [ownership notices](NOTICE.md). Historical implementation notes are retained under `docs/`; current status above and in the assessment coverage takes precedence over earlier checkpoints.

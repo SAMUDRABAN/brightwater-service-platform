@@ -1,6 +1,12 @@
 # Qualifying the UK outbound route
 
-The deployed India gateway handles attended tests to its configured Indian recipient. UK campaign calling is paused. When you get access to a UK number, first confirm what you can use it for.
+## Current status
+
+An attended UK outbound test passed on 11 November 2026 at 20:19 UK. Twilio carried the call and ElevenLabs ran the conversation. The CRM saved a confirmed boiler service and retained the transcript and recording. The call establishes the UK attended route through to a saved booking. UK automatic customer calling remains paused. Confirm the handset’s displayed caller ID and the real office inbound callback route as separate checks before customer activation. [Test evidence](submission/test-evidence.md)
+
+For a reviewer call, use **Call controls → UK test call** with the agreed recipient and fictional scenario. The separate campaign pilot procedure below applies when qualifying automatic campaign admission. The India gateway remains available for its configured attended-test route.
+
+## Number roles
 
 | What you have | What to confirm |
 | --- | --- |
@@ -16,9 +22,9 @@ One number can fill multiple roles if it meets each role's checks. Use fictional
 2. Configure a separate GB gateway using [the voice gateway runbook](voice-gateway.md) and the repository's [voice gateway Compose definition](../infra/plivo/compose.yaml). Set `BW_GATEWAY_COUNTRY=GB` and `BW_VOICE_BACKEND=elevenlabs`. For Twilio, set `BW_GATEWAY_CARRIER=twilio` and provide private `BW_TWILIO_ACCOUNT_SID`, `BW_TWILIO_AUTH_TOKEN` and `BW_TWILIO_FROM_NUMBER`. Twilio uses the gateway’s signed answer, status, recording and media routes. The gateway opens the ElevenLabs conversation with the call’s scoped CRM context. For a Plivo route, use `BW_PLIVO_FROM_NUMBER` and the Plivo credentials. Configure private carrier credentials, the HTTPS origin and API connection, gateway/runtime authentication, encrypted state and the managed closing credential `BW_MANAGED_CLOSING_API_KEY`. Check that the gateway's readiness endpoint reports `region: GB`.
 3. Configure the London API's private `BW_CAMPAIGN_GATEWAY_URL`, matching `BW_CAMPAIGN_GATEWAY_TOKEN`, `BW_MANAGED_CAMPAIGN_AGENT_ID` and `BW_OFFICE_CALLBACK_NUMBER`. Check recording notice and encrypted media storage. For the attended pilot set `BW_CAMPAIGN_PILOT_CUSTOMER_ID` and `BW_CAMPAIGN_PILOT_RECIPIENT` to the fictional record ID and its approved real UK handset. This restricts all admissions to that pair and skips automatic reminder queueing. Set `BW_CAMPAIGN_ROUTE_VERIFIED` only after the carrier check succeeds. Review remaining blockers in CRM **Call controls** or authenticated `GET /v1/campaign/status`.
 
-## Run the attended Brightwater test
+## Qualify automatic campaign admission with a controlled pilot
 
-The **Call my test phone** button is for the India route. For UK qualification, use a controlled GB campaign pilot with only the approved test destination eligible for dispatch. Keep the normal customer campaign paused during setup.
+Use this pilot only to qualify campaign dispatch. During setup, keep automatic calling paused and restrict the pilot to one approved test destination. The **Call my test phone** button runs the India attended route.
 
 1. Register the approved +44 recipient against the fictional test customer using authenticated `POST /v1/customers/{customer_id}/destination`, with `phone` and `consent_reference`. Check eligibility and suppression. Keep every other destination ineligible and verify there is no queued campaign work for other recipients before opening the pilot.
 2. Use the ordinary campaign admission path for the pilot. Roll out the same release and pilot configuration to the API, workers and Beat before enabling dialling. In the pilot environment, verify `BW_GATEWAY_ENABLED`, `BW_GATEWAY_CAMPAIGN_ENABLED`, `BW_DIALING_ENABLED` and the CRM dialling control. Choose a permitted UK calling window and keep periodic Beat scheduling paused. Queue one call through authenticated `POST /v1/calls` with the test `customer_id` and a unique `request_key`. With the workers running, trigger one controlled `brightwater.tick` to publish the outbox entry. The pilot flags prevent this tick from queueing reminders. Existing queued work is still subject to the pilot admission gate. If the test cannot be isolated, keep dialling paused and resolve that before dispatch.

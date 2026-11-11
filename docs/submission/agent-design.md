@@ -71,7 +71,7 @@ Typed REST contracts are in `backend/src/brightwater/schemas.py` and `managed/ag
 
 The database/worker select unresolved obligations about four weeks before due, then recheck at dispatch. UK-local hours are Mon–Fri 10:00–19:30, Sat 10:00–13:00, never Sunday. A customer's later preference wins. Up to three attempts are separated by at least a day and use different time bands. Conversation, annual refusal/completion and permanent suppression stop the appropriate future contacts. A fenced Beat scheduler, durable intent and transactional claims prevent duplicate scheduling; uncertain carrier initiation is reviewed rather than automatically redialled.
 
-Original drama-range numbers remain blocked. A separate owned/consented destination must be registered. UK campaigns remain disabled. The independent owner-attended India route is not substituted for UK route qualification.
+Original drama-range numbers remain blocked. A separate owned/consented destination must be registered. Automatic UK campaigns remain disabled. The attended UK route has saved a fictional booking. The assessment review uses the separate attended form and the reviewer’s agreed destination. See [attended evidence](test-evidence.md).
 
 ## Questions before real customers
 

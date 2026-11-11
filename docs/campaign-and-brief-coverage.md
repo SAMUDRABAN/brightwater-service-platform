@@ -2,6 +2,8 @@
 
 10 November 2026. Source release 0.4.0. These are implemented controls and engineering checks, not approval to start UK customer calls or a claim of human-equivalent conversation.
 
+The 11 November 2026 attended UK test reached an agreed handset and saved a boiler service in the CRM. See the [call evidence and remaining playback checks](submission/test-evidence.md).
+
 ## Scheduled reminders
 
 Celery Beat enqueues eligible work every 15 seconds through Redis. PostgreSQL retains call intent and the transactional outbox. The scheduler selects each customer once when an unresolved service/certificate falls between today and 28 days ahead, prioritising landlords and then due date. Historical overdue data does not create an endless automatic calling loop; it needs office review. Customers outside this window wait. The eight supplied fictional source numbers never become live destinations automatically.
@@ -17,16 +19,16 @@ Dispatch now uses the native ElevenLabs customer agent through an explicitly con
 | Reminder about four weeks before due | Upcoming 28-day selection, landlord priority, durable outbox and fenced Beat | Integration tests; activation remains paused |
 | Calling hours and preferences | UK timezone/DST, exact published windows, restrictive customer preference | Backend policy tests |
 | Three attempts and stop after conversation | Dispatched-attempt counter, 24-hour spacing, distinct time bands, stopped contact | Policy, outbox and scheduler tests |
-| Caller ID | Separate real GB caller ID configuration; drama numbers blocked | Actual UK carrier/caller-ID qualification outstanding |
+| Caller ID | Separate real GB caller ID configuration; drama numbers blocked | Attended UK carrier and booking verified; handset caller ID and campaign activation checks remain |
 | Automated opening | Separate campaign opening identifies automated assistant and Brightwater in the first sentence, then recording notice | Native configuration and model checks |
 | Named customer only | Existing original-speech, notice and identity gates retained; proxy cannot unlock account | Existing privacy and timing regressions |
-| First voicemail only | Verified campaign voicemail claims the allowance once and returns only a short approved office callback message; no name/address/boiler | Backend tests; real approved office number still required |
+| First voicemail only | Verified campaign voicemail claims the allowance once and returns only a short approved office callback message; no name/address/boiler | First-message path implemented; approved office callback and handset playback still need verification |
 | Automated menus / screening bots | No keypad navigation or bot dialogue; guarded polite end | Existing boundary regressions |
 | Do not call | Durable suppression, future admission blocked, current account access stopped | Existing semantic and independent backstop tests |
 | Human request | Requested callback for Sarah, office hours Mon–Fri 08:30–16:00; no invented live transfer or time guarantee | Semantic and native regressions |
 | Standard prices only | £95 service / £75 CP12 / £145 combined; £60 CP12 each for three or more in one proposal; VAT included | Authoritative backend pricing tests |
 | No payment collection / discounts | Engineer takes payment on the day; no replacement-work quotes or invented reductions | Agent instructions and tool contracts |
-| Gas smell / CO alarm | Immediate emergency advice before tools, record and end so caller can seek help; no routine booking | Native/semantic checks; handset safety scenario still outstanding |
+| Gas smell / CO alarm | Immediate emergency advice before tools, record and end so caller can seek help; no routine booking | Gas-smell handset roleplay saved the emergency outcome; see the evidence index |
 | Leak / no heating / no hot water | Urgent callback for Sarah with actual caller detail; blocks routine booking | Existing safety gates and new native checks |
 | Complaint | Acknowledge and record for Mark; no argument or invented refund | Existing follow-up contracts |
 | Other-work quote / ageing boiler | Lead for Sarah; one optional quote-interest question before the final booking readback when verified age meets configured threshold, no pressure or replacement price | Configurable 15-year assumption needs Mark's approval before customer activation |
