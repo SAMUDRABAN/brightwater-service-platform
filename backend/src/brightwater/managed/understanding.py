@@ -174,7 +174,7 @@ def interpret(snapshot, *, client=None, redis=None):
     """Short-lived singleflight by exact server context; cache is not action authority."""
     fields, digest = _fields(snapshot), snapshot_digest(snapshot)
     model = settings().managed_interpretation_model
-    cache_key = 'managed:meaning:v11:' + model + ':' + digest
+    cache_key = 'managed:meaning:v12:' + model + ':' + digest
     def unavailable():
         return Understanding(**fields, digest=digest, meaning=None)
     def cached():
@@ -222,16 +222,16 @@ def interpret(snapshot, *, client=None, redis=None):
         data['reference_uk_date'] = now().astimezone(UK).date().isoformat()
         data['extract_readback'] = False
         schema = TurnMeaning.model_json_schema()
-        disposition_check = (
-            '\nFor disposition, first identify the object of any refusal. If the caller leaves it unstated, '
-            'read interrupted_agent_context as the latest turn when present. A proposed date, callback, '
-            'quote, identity question or missing object means disposition=none. Only an offer of the due '
-            'service itself supports not_interested for a bare refusal. The intended speech is not proof '
-            'of a readback or authorisation.'
-        )
+        disposition_check = ('For disposition, inspect the current reply for an actual refusal. If it is positive, '
+            'a question, or still seeks a visit, it is not a refusal. If a refusal does not name its object, '
+            'use the latest agent turn: interrupted_agent_context when present, otherwise completed_agent_speech. '
+            'If that turn proposes a specific date, time, callback, quote or identity check, set disposition=none. '
+            'If it offers to arrange the due service itself and the caller refuses outright, set disposition=not_interested. '
+            'The intended speech is never proof of a readback or authorisation.')
         payload = {'model': model, 'temperature': 0, 'max_tokens': 450,
                    'messages': [{'role': 'system', 'content': SYSTEM},
-                                {'role': 'user', 'content': json.dumps(data, ensure_ascii=False) + disposition_check}],
+                                {'role': 'system', 'content': disposition_check},
+                                {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}],
                    'response_format': {'type': 'json_schema', 'json_schema': {'name': 'caller_meaning', 'strict': True, 'schema': schema}}}
         try:
             def request(c):
