@@ -43,9 +43,13 @@ def payload(**overrides):
                            "consent": True, "request_key": str(uuid4())} | overrides))
 
 
-def test_uk_test_admission_is_idempotent_and_never_enables_campaign(enabled_pilot):
+@pytest.mark.parametrize("hour,customer_id", [(13, "BW-1041"), (20, "BW-1041"), (11, "BW-1093")])
+def test_uk_test_admission_is_idempotent_and_never_enables_campaign(enabled_pilot, monkeypatch, hour, customer_id):
     cfg = enabled_pilot
-    body = payload()
+    at = datetime(2026, 11, 11, hour, tzinfo=UTC)
+    monkeypatch.setattr("brightwater.uk_test.now", lambda: at)
+    monkeypatch.setattr("brightwater.api.now", lambda: at)
+    body = payload(customer_id=customer_id)
     with session() as db, db.begin():
         call, token = prepare(db, cfg, body)
         assert is_uk_test(call)

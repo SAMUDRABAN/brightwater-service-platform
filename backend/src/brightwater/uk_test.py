@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from brightwater import models as m
 from brightwater import services as svc
-from brightwater.policy import UK, Rejected, allowed_time, now, uk_phone
+from brightwater.policy import UK, Rejected, now, uk_phone
 from brightwater.seed import CUSTOMERS
 
 UK_TEST_BAND = "uk_test"
@@ -61,8 +61,6 @@ def prepare(db, cfg, body):
             raise Rejected("request_conflict", "The request already belongs to a different test")
         return previous, None
     at = now()
-    if not allowed_time(at, preference):
-        raise Rejected("outside_calling_window", "The UK calling window or this fixture’s preference is closed")
     if svc.suppressed(db, template_id, number):
         raise Rejected("suppressed", "The recipient opted out")
     if db.scalar(select(m.Call.id).where(m.Call.state.in_(svc.ACTIVE)).limit(1)):
