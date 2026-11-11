@@ -70,6 +70,12 @@ def register_destination(db, customer_id, phone, consent_reference):
 
 
 def check_dial_policy(db, c, dest, at, *, exclude_call=None):
+    cfg = settings()
+    if cfg.campaign_pilot_customer_id and (
+        c.id != cfg.campaign_pilot_customer_id or not dest
+        or dest.phone != cfg.campaign_pilot_recipient.get_secret_value()
+    ):
+        raise Rejected("pilot_recipient_mismatch", "Only the approved UK pilot customer and recipient may be called")
     if not allowed_time(at, c.not_before):
         raise Rejected("outside_calling_window", "Current UK time or the customer's preference blocks this call")
     if c.contact_blocked or not dest or not dest.enabled:
@@ -500,7 +506,7 @@ def finalise(db, call, summary):
     kinds = {e.kind for e in events}
     answered = call.conversation or "connected" in kinds or any(
         e.payload.get("carrier_answered") is True and e.payload.get("source") in {
-            "signed_plivo_status", "voice_gateway_failure", "voice_gateway_diagnostic_hold",
+            "signed_plivo_status", "signed_twilio_status", "voice_gateway_failure", "voice_gateway_diagnostic_hold",
             "authenticated_carrier_reconciliation",
         } for e in events)
     facts = set()
@@ -518,7 +524,7 @@ def finalise(db, call, summary):
     if suppressed(db, call.customer_id, dest.phone):
         facts.add("Do not call")
     technical_failure = answered and any(
-        e.kind == "failed" and e.payload.get("source") in {"voice_gateway_failure", "signed_plivo_status"}
+        e.kind == "failed" and e.payload.get("source") in {"voice_gateway_failure", "signed_plivo_status", "signed_twilio_status"}
         for e in events
     )
     fallback = None

@@ -23,6 +23,12 @@ class FollowupUpdate(BaseModel):
     request_key: str = Field(pattern=r"^[a-f0-9-]{36}$")
 
 
+class OutcomeReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    disposition: Literal["not_available", "wrong_number", "not_interested", "serviced_elsewhere", "voicemail"]
+    note: str = Field(min_length=10, max_length=1500)
+
+
 class Preferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
     not_before: time | None = None
@@ -265,6 +271,37 @@ def install(app, operator):
             "page": page,
             "page_size": page_size,
         }
+
+    @app.post("/v1/office/calls/{call_id}/outcome", dependencies=auth)
+    def review_outcome(call_id: str, body: OutcomeReview, request: Request, db: DB):
+        from brightwater import schemas as s
+        from brightwater import services as svc
+
+        svc.control_lock(db)
+        call = db.get(m.Call, call_id, with_for_update=True)
+        if not call:
+            raise Rejected("not_found", "Call not found", 404)
+        key = "office-outcome-review"
+        prior = db.scalar(select(m.CallEvent).where(m.CallEvent.call_id == call.id,
+                                                    m.CallEvent.provider_event_id == key))
+        if prior:
+            if prior.kind == body.disposition and prior.payload.get("note") == body.note:
+                return {"outcome": call.outcome}
+            raise Rejected("outcome_already_reviewed", "This attempt already has a staff outcome")
+        if call.outcome is not None or call.state not in {"finished", "failed"} or call.purpose == "browser_simulation":
+            raise Rejected("outcome_review_unavailable", "Only a finished, unclassified telephone attempt can be reviewed")
+        if db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.kind == "recording_refused").limit(1)):
+            raise Rejected("outcome_review_unavailable", "The caller refused recording")
+        staff = getattr(request.state, "staff", None)
+        svc.record_event(db, call.id, s.EventInput(provider_event_id=key, kind=body.disposition,
+            occurred_at=now(), payload={"source": "office_outcome_review", "note": body.note,
+                                        "actor": staff.username if staff else "trusted_operator"}))
+        if call.state == "failed":
+            svc.finalise(db, call, call.summary)
+        for item in db.scalars(select(m.Followup).where(m.Followup.call_id == call.id,
+                                m.Followup.kind == "internal_review", m.Followup.resolved.is_(False))):
+            item.resolved = True
+        return {"outcome": call.outcome}
 
     @app.get("/v1/office/diary", dependencies=auth)
     def diary(request: Request, db: DB):

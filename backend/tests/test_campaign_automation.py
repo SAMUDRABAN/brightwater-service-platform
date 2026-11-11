@@ -261,3 +261,20 @@ def test_verified_voicemail_requests_first_message_without_native_tool(monkeypat
     semantic_runtime.prefetch(call_id, proof.source_id)
     assert len(sent) == 1
     assert '9 1 9 8 7 6 5 4 3 2 1 0' in sent[0]
+
+
+def test_pilot_does_not_enqueue_or_allow_other_destinations(monkeypatch):
+    from brightwater.policy import Rejected
+
+    cfg = settings()
+    monkeypatch.setattr(cfg, 'campaign_pilot_customer_id', 'BW-1041')
+    monkeypatch.setattr(cfg, 'campaign_pilot_recipient', SecretStr('+442079460124'))
+    with session() as db, db.begin():
+        dest = svc.register_destination(db, 'BW-1041', '+442079460124', 'Consented fixture test only')
+        other = svc.register_destination(db, 'BW-1056', '+442079460125', 'Consented fixture test only')
+        at = AT.replace(hour=12)
+        assert enqueue_due(db, at) == []
+        assert svc.request_call(db, 'BW-1041', 'pilot-only', at=at).destination_id == dest.id
+        with pytest.raises(Rejected) as rejected:
+            svc.check_dial_policy(db, svc.customer(db, 'BW-1056'), other, at)
+        assert rejected.value.code == 'pilot_recipient_mismatch'

@@ -18,7 +18,7 @@ def configuration_issues(cfg):
         issues.append('Configure the verified UK campaign gateway; the India test route is separate')
     if len(getattr(cfg, 'campaign_gateway_token', cfg.voice_gateway_token).get_secret_value()) < 32:
         issues.append('Configure private campaign gateway authentication')
-    if not getattr(cfg, 'campaign_route_verified', False):
+    if not cfg.campaign_route_verified and not cfg.campaign_pilot_customer_id:
         issues.append('Qualify the UK carrier route and approved caller ID before activation')
     try:
         uk_phone(cfg.office_callback_number)
@@ -45,6 +45,8 @@ def enqueue_due(db, at=None):
     at = at or now()
     from brightwater.config import settings
     cfg = settings()
+    if cfg.campaign_pilot_customer_id:
+        return []  # Only an operator may start the attended pilot.
     queued = []
     start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
     dispatched = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.purpose == 'campaign',

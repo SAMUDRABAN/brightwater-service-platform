@@ -41,9 +41,13 @@ class GatewaySettings(BaseSettings):
     gateway_token: SecretStr
     gateway_state_key: SecretStr
     redis_url: SecretStr
-    plivo_auth_id: SecretStr
-    plivo_auth_token: SecretStr
-    plivo_from_number: SecretStr
+    plivo_auth_id: SecretStr = SecretStr("")
+    plivo_auth_token: SecretStr = SecretStr("")
+    plivo_from_number: SecretStr = SecretStr("")
+    gateway_carrier: Literal["plivo", "twilio"] = "plivo"
+    twilio_account_sid: SecretStr = SecretStr("")
+    twilio_auth_token: SecretStr = SecretStr("")
+    twilio_from_number: SecretStr = SecretStr("")
     engineering_recipient: SecretStr = SecretStr("")
     gateway_country: str = "IN"
     gateway_enabled: bool = False
@@ -78,13 +82,20 @@ class GatewaySettings(BaseSettings):
         if len(self.gateway_token.get_secret_value()) < 32 or len(self.runtime_token.get_secret_value()) < 32:
             raise ValueError("Independent strong gateway/runtime credentials required")
         Fernet(self.gateway_state_key.get_secret_value().encode())
+        if self.gateway_carrier == "twilio":
+            import re
+
+            if self.gateway_country != "GB" or not re.fullmatch(r"AC[0-9a-fA-F]{32}", self.twilio_account_sid.get_secret_value()) or not self.twilio_auth_token.get_secret_value():
+                raise ValueError("Twilio requires a UK gateway and account credentials")
+        elif not self.plivo_auth_id.get_secret_value() or not self.plivo_auth_token.get_secret_value():
+            raise ValueError("Plivo account credentials are required")
         if self.gateway_country == "IN":
             if not self.plivo_from_number.get_secret_value().startswith("+91") or not self.engineering_recipient.get_secret_value().startswith("+91") or self.gateway_campaign_enabled:
                 raise ValueError("India is an engineering-only route with one privately consented recipient")
         elif self.gateway_country == "GB":
             from brightwater.policy import Rejected, uk_phone
             try:
-                uk_phone(self.plivo_from_number.get_secret_value())
+                uk_phone((self.twilio_from_number if self.gateway_carrier == "twilio" else self.plivo_from_number).get_secret_value())
             except Rejected:
                 raise ValueError("Configure an approved real UK caller ID") from None
             if self.voice_backend != "elevenlabs":
@@ -200,6 +211,8 @@ async def store_latency_sample(redis, sid, sample):
 
 
 async def trusted_form(request, cfg):
+    if cfg.gateway_carrier != "plivo":
+        raise HTTPException(404)
     raw = await request.body()
     if len(raw) > 65536:
         raise HTTPException(413)
@@ -263,8 +276,14 @@ def create_app(cfg):
         app.state.redis = Redis.from_url(cfg.redis_url.get_secret_value())
         app.state.store = State(app.state.redis, Fernet(cfg.gateway_state_key.get_secret_value().encode()))
         app.state.http = httpx.AsyncClient(follow_redirects=False)
-        app.state.carrier = PlivoClient(app.state.http, PlivoCredentials(
-            cfg.plivo_auth_id.get_secret_value(), cfg.plivo_auth_token.get_secret_value()))
+        if cfg.gateway_carrier == "twilio":
+            from brightwater.twilio_voice import TwilioClient
+
+            app.state.carrier = TwilioClient(app.state.http, cfg.twilio_account_sid.get_secret_value(),
+                cfg.twilio_auth_token.get_secret_value(), cfg.gateway_origin)
+        else:
+            app.state.carrier = PlivoClient(app.state.http, PlivoCredentials(
+                cfg.plivo_auth_id.get_secret_value(), cfg.plivo_auth_token.get_secret_value()))
         app.state.tasks = set()
         app.state.active_bridges = {}
         # Recover jobs held by a process that stopped before acknowledging them.
@@ -326,6 +345,13 @@ def create_app(cfg):
             raise HTTPException(502, "Stop acknowledgement uncertain; reconcile the existing call") from None
         return {"stopped": True}
 
+    async def save_request_uuid(sid, identifier):
+        current = await app.state.store.get(sid)
+        if current.get("request_uuid") not in (None, identifier):
+            raise RuntimeError("Carrier request identity conflict")
+        current.update(request_uuid=identifier)
+        await app.state.store.put(sid, current)
+
     @app.post("/v1/outbound", status_code=202)
     async def outbound(body: Outbound, authorization: str | None = Header(default=None)):
         if not authorization or not secrets.compare_digest(authorization, "Bearer " + cfg.gateway_token.get_secret_value()):
@@ -368,15 +394,16 @@ def create_app(cfg):
             "created": time.time(), "status": "initiating"}
         await app.state.store.put(sid, context)
         try:
-            identifier = await app.state.carrier.make_call(from_number=cfg.plivo_from_number.get_secret_value(),
-                to_number=context["phone"], answer_url=cfg.gateway_origin + "/plivo/answer/" + sid,
-                hangup_url=cfg.gateway_origin + "/plivo/status/" + sid, max_seconds=body.max_seconds)
-            # Read again: an early signed callback may already have bound CallUUID.
-            current = await app.state.store.get(sid)
-            if current.get("request_uuid") not in (None, identifier):
-                raise RuntimeError("Carrier request identity conflict")
-            current.update(request_uuid=identifier)
-            await app.state.store.put(sid, current)
+            if cfg.gateway_carrier == "twilio":
+                identifier = await app.state.carrier.make_call(sid=sid, from_number=cfg.twilio_from_number.get_secret_value(),
+                    to_number=context["phone"], max_seconds=body.max_seconds)
+                async with app.state.redis.lock("voice:twilio-state:" + sid, timeout=10, blocking_timeout=2):
+                    await save_request_uuid(sid, identifier)
+            else:
+                identifier = await app.state.carrier.make_call(from_number=cfg.plivo_from_number.get_secret_value(),
+                    to_number=context["phone"], answer_url=cfg.gateway_origin + "/plivo/answer/" + sid,
+                    hangup_url=cfg.gateway_origin + "/plivo/status/" + sid, max_seconds=body.max_seconds)
+                await save_request_uuid(sid, identifier)
             return {"request_uuid": identifier}
         except Exception:
             raise HTTPException(502, "Carrier acknowledgement uncertain; do not redial") from None
@@ -448,6 +475,9 @@ def create_app(cfg):
 
     @app.websocket("/plivo/media/{sid}")
     async def media(ws: WebSocket, sid: str):
+        if cfg.gateway_carrier != "plivo":
+            await ws.close(code=1008)
+            return
         context = await app.state.store.get(sid)
         url = configured_external_url(cfg.gateway_origin, ws.url.path, ws.url.query)
         signature_mode = verify_stream_signature(external_url=url,
@@ -514,18 +544,22 @@ def create_app(cfg):
             try:
                 context = await app.state.store.get(sid)
                 identifier = await app.state.redis.get("voice:recording-id:" + sid)
-                metadata = await app.state.carrier.recording_metadata(identifier.decode(), expected_call_uuid=context["call_uuid"])
-                url = metadata.get("recording_url", "")
-                host = urlparse(url)
-                if host.scheme != "https" or not host.hostname or not host.hostname.endswith((".plivo.com", ".amazonaws.com")) or host.username or host.password:
-                    raise ValueError("Unexpected provider recording location")
-                content = bytearray()
-                async with app.state.http.stream("GET", url, timeout=30) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes():
-                        content.extend(chunk)
-                        if len(content) > MAX_CARRIER_RECORDING_BYTES:
-                            raise ValueError("Recording size bound exceeded")
+                if cfg.gateway_carrier == "twilio":
+                    bound = await app.state.redis.get("voice:bind:" + sid)
+                    content = await app.state.carrier.recording(identifier.decode(), bound.decode(), MAX_CARRIER_RECORDING_BYTES)
+                else:
+                    metadata = await app.state.carrier.recording_metadata(identifier.decode(), expected_call_uuid=context["call_uuid"])
+                    url = metadata.get("recording_url", "")
+                    host = urlparse(url)
+                    if host.scheme != "https" or not host.hostname or not host.hostname.endswith((".plivo.com", ".amazonaws.com")) or host.username or host.password:
+                        raise ValueError("Unexpected provider recording location")
+                    content = bytearray()
+                    async with app.state.http.stream("GET", url, timeout=30) as response:
+                        response.raise_for_status()
+                        async for chunk in response.aiter_bytes():
+                            content.extend(chunk)
+                            if len(content) > MAX_CARRIER_RECORDING_BYTES:
+                                raise ValueError("Recording size bound exceeded")
                 ogg = await asyncio.to_thread(to_ogg, bytes(content))
                 result = await app.state.http.post(cfg.api_url + "/internal/calls/" + context["call_id"] + "/recording",
                     content=ogg, headers={"Authorization": "Bearer " + cfg.runtime_token.get_secret_value(), "Content-Type": "audio/ogg"}, timeout=30)
@@ -541,10 +575,14 @@ def create_app(cfg):
                 if not cancelled:
                     await app.state.redis.lrem("voice:recordings-processing", 1, job)
 
+    if cfg.gateway_carrier == "twilio":
+        from brightwater.twilio_voice import install_twilio
+
+        install_twilio(app, cfg, event, run_voice)
     return app
 
 
-async def run_voice(app, ws, context, cfg, event):
+async def run_voice(app, ws, context, cfg, event, *, account_id=None):
     from livekit.agents.utils import http_context
 
     from brightwater.plivo_audio import AudioTransportError, PlivoAudioTransport
@@ -558,7 +596,7 @@ async def run_voice(app, ws, context, cfg, event):
             return False
 
     transport = PlivoAudioTransport(ws, expected_call_id=context["call_uuid"],
-        expected_account_id=cfg.plivo_auth_id.get_secret_value(), verify_start=verify_start,
+        expected_account_id=account_id or cfg.plivo_auth_id.get_secret_value(), verify_start=None if account_id else verify_start,
         startup_preroll=True)
     done = asyncio.Event()
     pending = set()
@@ -589,7 +627,7 @@ async def run_voice(app, ws, context, cfg, event):
                             "validation_stage": transport.input_failure_stage,
                             "queued_frames": transport._input.qsize(), "queued_bytes": transport._input_bytes,
                             "expected_call_uuid": context["call_uuid"],
-                            "expected_account_id": cfg.plivo_auth_id.get_secret_value(),
+                            "expected_account_id": account_id or cfg.plivo_auth_id.get_secret_value(),
                             "codec": transport.codec, "failure_reason": transport.failure_reason}
                         await app.state.redis.set("voice:packet-failure:" + context["sid"],
                             app.state.store.cipher.encrypt(json.dumps(evidence).encode()), ex=600)
@@ -618,7 +656,7 @@ async def run_voice(app, ws, context, cfg, event):
         startup_timing["recording_confirmed_at"] = time.time()
         await app.state.store.put(context["sid"], context)
         stage = "connected_audit"
-        await event(context, "connected", {"carrier_call_uuid": context["call_uuid"], "recording_id": recording_id}, event_id="plivo-connected:" + context["call_uuid"])
+        await event(context, "connected", {"carrier_call_uuid": context["call_uuid"], "recording_id": recording_id}, event_id=cfg.gateway_carrier + "-connected:" + context["call_uuid"])
         startup_timing["connected_audit_completed_at"] = time.time()
         if cfg.voice_backend == "elevenlabs":
             from brightwater.managed.plivo import run_managed_phone

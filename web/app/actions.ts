@@ -132,3 +132,16 @@ export async function updatePreferences(form: FormData) {
   revalidatePath(`/customers/${id}`);
   redirect(`/customers/${id}?notice=${encodeURIComponent(error || "Calling preference saved.")}`);
 }
+
+export async function reviewCallOutcome(form: FormData) {
+  const id = value(form, "call_id");
+  if (!/^[a-f0-9-]{36}$/.test(id)) redirect("/calls");
+  const error = await post(`/v1/office/calls/${id}/outcome`, {
+    disposition: value(form, "disposition"),
+    note: value(form, "note"),
+  });
+  revalidatePath("/calls");
+  revalidatePath("/callbacks");
+  revalidatePath("/morning");
+  redirect(`/calls/${id}?notice=${encodeURIComponent(error || "Call outcome saved.")}`);
+}

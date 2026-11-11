@@ -313,3 +313,26 @@ def test_booking_details_enforce_engineer_ownership_without_call_record_access(s
         client.get("/v1/office/bookings/" + saved["priya"], headers=headers("sarah")).status_code
         == 200
     )
+
+
+def test_staff_can_resolve_unclassified_phone_outcome_with_evidence(staff):
+    with session() as db, db.begin():
+        call, _ = make_call(db)
+        call.state = "finished"
+        call_id = call.id
+        db.add(m.Followup(call_id=call_id, kind="internal_review", owner="Sarah", priority=1, detail="Check the recording"))
+    path = f"/v1/office/calls/{call_id}/outcome"
+    payload = {"disposition": "wrong_number", "note": "The person answering confirmed the number belongs to somebody else."}
+    assert client.post(path, headers=headers("dan"), json=payload).status_code == 403
+    assert client.post(path, headers=headers("sarah"), json=payload | {"disposition": "Booked"}).status_code == 422
+    for _ in range(2):
+        response = client.post(path, headers=headers("sarah"), json=payload)
+        assert response.status_code == 200
+        assert response.json()["outcome"] == "Wrong number"
+    assert client.post(path, headers=headers("sarah"), json=payload | {"disposition": "voicemail"}).status_code == 409
+    with session() as db:
+        assert db.get(m.Call, call_id).outcome == "Wrong number"
+        notes = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call_id)))
+        assert len(notes) == 1 and notes[0].payload["actor"] == "sarah"
+        followups = {f.kind: f.resolved for f in db.scalars(select(m.Followup).where(m.Followup.call_id == call_id))}
+        assert followups == {"internal_review": True, "wrong_number": False}

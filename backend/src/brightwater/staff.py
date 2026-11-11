@@ -30,6 +30,8 @@ def office_allowed(method, path):
             return True
         return path in ("/v1/campaign/status", "/v1/dashboard", "/v1/customers", "/v1/calls", "/v1/office/followups", "/v1/office/calls", "/v1/office/diary") or bool(re.fullmatch(r"/v1/office/customers/BW-[0-9]{4}", path)) or bool(re.fullmatch(r"/v1/calls/[a-f0-9-]{36}(/recording)?", path))
     if method == "POST":
+        if re.fullmatch(r"/v1/office/calls/[a-f0-9-]{36}/outcome", path):
+            return True
         return path in ("/v1/calls", "/v1/control/pause") or bool(re.fullmatch(r"/v1/office/followups/[a-f0-9-]{36}", path)) or bool(re.fullmatch(r"/v1/office/customers/BW-[0-9]{4}/preferences", path)) or bool(re.fullmatch(r"/v1/customers/BW-[0-9]{4}/destination", path))
     return False
 

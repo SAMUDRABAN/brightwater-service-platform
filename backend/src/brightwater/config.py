@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     campaign_gateway_url: str = ""
     campaign_gateway_token: SecretStr = SecretStr("")
     campaign_route_verified: bool = False
+    campaign_pilot_customer_id: str = ""
+    campaign_pilot_recipient: SecretStr = SecretStr("")
     campaign_daily_limit: int = Field(default=20, ge=1, le=20)
     managed_campaign_agent_id: str = ""
     max_active_calls: int = Field(default=1, ge=1, le=20)
@@ -74,6 +76,17 @@ class Settings(BaseSettings):
             raise ValueError("Operator and runtime credentials must be distinct")
         if self.environment in {"shadow", "showcase", "test"} and self.dialing_enabled:
             raise ValueError(f"Dialing is forbidden in {self.environment}")
+        pilot_recipient = self.campaign_pilot_recipient.get_secret_value()
+        if self.campaign_pilot_customer_id or pilot_recipient:
+            import re
+
+            from brightwater.policy import Rejected, uk_phone
+            if not re.fullmatch(r"BW-[0-9]{4}", self.campaign_pilot_customer_id):
+                raise ValueError("Pilot requires a fictional assessment customer ID")
+            try:
+                uk_phone(pilot_recipient)
+            except Rejected:
+                raise ValueError("Pilot requires a real approved UK test recipient") from None
         if self.dialing_enabled:
             from brightwater.campaign import configuration_issues
             issues = configuration_issues(self)

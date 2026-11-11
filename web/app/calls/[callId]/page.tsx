@@ -2,6 +2,7 @@ export const metadata = { title: "Call record" };
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { requireStaff } from "../../../lib/staff";
+import { reviewCallOutcome } from "../../actions";
 import { api } from "../../../lib/api";
 import { duration, gbDate, gbTime, money } from "../../../lib/format";
 import { Icon } from "../../../components/Icon";
@@ -49,7 +50,13 @@ type Detail = {
   };
   bookings: { id: string; state: string; total_pence: number }[];
 };
-export default async function CallPage({ params }: { params: Promise<{ callId: string }> }) {
+export default async function CallPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ callId: string }>;
+  searchParams: Promise<{ notice?: string }>;
+}) {
   const user = await requireStaff();
   if (user.role === "engineer") redirect("/bookings");
   const { callId } = await params;
@@ -62,6 +69,12 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
   }
   const turns = call.events.filter((e) => ["user_utterance", "agent_utterance"].includes(e.kind));
   const office = call.events.filter((e) => e.kind === "office_followup_updated");
+  const review = call.events.find((e) => e.payload.source === "office_outcome_review");
+  const { notice } = await searchParams;
+  const reviewable =
+    !call.outcome &&
+    call.purpose !== "browser_simulation" &&
+    !call.events.some((e) => e.kind === "recording_refused");
   const completed = ["finished", "failed"].includes(call.state);
   return (
     <>
@@ -85,6 +98,7 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
           {call.outcome || (completed ? "Needs review" : "In progress")}
         </Status>
       </PageHeading>
+      {notice && <p role="status">{notice}</p>}
       <section className="panel">
         <PanelHeading title="Call summary">
           {call.purpose === "engineering" && (
@@ -93,6 +107,32 @@ export default async function CallPage({ params }: { params: Promise<{ callId: s
         </PanelHeading>
         <div className="panel-body">
           <p>{call.summary || "No staff summary has been recorded yet."}</p>
+          {review && (
+            <p>
+              <strong>Reviewed by {review.payload.actor}</strong> {review.payload.note}
+            </p>
+          )}
+          {reviewable && completed && (
+            <form action={reviewCallOutcome} className="controls">
+              <input type="hidden" name="call_id" value={call.id} />
+              <label htmlFor="review-disposition">Outcome supported by the call evidence</label>
+              <select id="review-disposition" name="disposition" required defaultValue="">
+                <option value="" disabled>
+                  Choose an outcome
+                </option>
+                <option value="not_available">Not available</option>
+                <option value="wrong_number">Wrong number</option>
+                <option value="not_interested">Not interested</option>
+                <option value="serviced_elsewhere">Serviced elsewhere</option>
+                <option value="voicemail">Voicemail</option>
+              </select>
+              <label htmlFor="review-note">Evidence note</label>
+              <textarea id="review-note" name="note" minLength={10} maxLength={1500} required />
+              <button className="button" type="submit">
+                Save reviewed outcome
+              </button>
+            </form>
+          )}
           {!call.outcome && completed && (
             <p className="muted">
               This attempt has no classified business outcome. It has not been relabelled as a
