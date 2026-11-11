@@ -18,6 +18,13 @@ class CallInput(Strict):
     request_key: str = Field(min_length=8, max_length=160)
 
 
+class UKTestInput(Strict):
+    customer_id: str = Field(pattern=r"^BW-[0-9]{4}$")
+    phone: SecretStr = Field(min_length=6, max_length=32)
+    consent: bool
+    request_key: str = Field(pattern=r"^[a-f0-9-]{36}$")
+
+
 class EngineeringCallInput(Strict):
     request_key: str = Field(min_length=8, max_length=160)
     scenario: Literal["standard", "landlord"] = "standard"

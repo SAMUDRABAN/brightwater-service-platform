@@ -260,6 +260,7 @@ export function CallTable({ items }: { items: CallRecord[] }) {
                 {c.purpose === "browser_simulation" && (
                   <span className="test-label">Browser test</span>
                 )}
+                {c.purpose === "uk_test" && <span className="test-label">UK test</span>}
                 {c.purpose === "engineering" && (
                   <span className="test-label">Engineering test</span>
                 )}

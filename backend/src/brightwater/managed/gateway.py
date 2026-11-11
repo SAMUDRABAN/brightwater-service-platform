@@ -214,7 +214,8 @@ def install(app, operator, scoped_call):
             raise Rejected("managed_phone_disabled", "The managed phone adapter is not enabled for this call", 403)
         if campaign:
             from brightwater.campaign import configuration_issues
-            if not cfg.dialing_enabled or configuration_issues(cfg):
+            from brightwater.uk_test import is_uk_test
+            if not is_uk_test(call) and (not cfg.dialing_enabled or configuration_issues(cfg)):
                 raise Rejected("campaign_disabled", "Customer campaign is not qualified", 403)
         with Session(office_engine()) as db:
             destination = db.get(m.Destination, call.destination_id)

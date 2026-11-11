@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     campaign_gateway_url: str = ""
     campaign_gateway_token: SecretStr = SecretStr("")
     campaign_route_verified: bool = False
+    uk_test_enabled: bool = False
+    uk_test_caller_id: SecretStr = SecretStr("")
+    uk_test_daily_limit: int = Field(default=6, ge=1, le=20)
     campaign_pilot_customer_id: str = ""
     campaign_pilot_recipient: SecretStr = SecretStr("")
     campaign_daily_limit: int = Field(default=20, ge=1, le=20)

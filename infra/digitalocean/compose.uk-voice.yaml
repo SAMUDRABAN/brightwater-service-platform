@@ -1,0 +1,27 @@
+# Optional UK test gateway on the London host. No additional public ports.
+services:
+  uk-voice:
+    build:
+      context: ./backend
+    command: [uvicorn, brightwater.plivo_gateway:app_factory, --factory, --host, 0.0.0.0, --port, '8788', --workers, '1', --no-access-log, --log-level, warning, --ws-max-size, '65536']
+    env_file: ${BW_UK_GATEWAY_ENV_FILE:-/etc/brightwater/uk-voice.env}
+    environment:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    restart: unless-stopped
+    networks: [app, data, egress]
+    mem_limit: 900m
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8788/health/ready", timeout=3)']
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+  caddy:
+    environment:
+      BW_UK_GATEWAY_HOST: ${BW_UK_GATEWAY_HOST:?Set BW_UK_GATEWAY_HOST}
+    volumes:
+      - ./infra/digitalocean/Caddyfile.uk-voice:/etc/caddy/Caddyfile:ro
+      - ./infra/digitalocean/Caddyfile:/etc/caddy/Caddyfile.main:ro

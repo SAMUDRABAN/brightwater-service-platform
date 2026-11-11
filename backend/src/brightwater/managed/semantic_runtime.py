@@ -269,15 +269,20 @@ def finish_phone_voicemail(db, call, evidence):
 def stop_carrier(call_id, *, polite=False, closing_message=None):
     """Only revoke an already admitted call; never admit, redial or change routing."""
     cfg = settings()
-    if not cfg.voice_gateway_url or not cfg.voice_gateway_token.get_secret_value():
+    with Session(engine()) as db:
+        call = db.get(m.Call, call_id)
+        campaign = bool(call and call.purpose == "campaign")
+    url = cfg.campaign_gateway_url if campaign else cfg.voice_gateway_url
+    token = cfg.campaign_gateway_token if campaign else cfg.voice_gateway_token
+    if not url or not token.get_secret_value():
         return False
     payload = {'call_id': call_id, 'polite': polite}
     if closing_message:
         payload['closing_message'] = closing_message
     try:
         with httpx.Client(timeout=4, follow_redirects=False) as client:
-            result = client.post(cfg.voice_gateway_url.rstrip('/') + '/v1/stop',
-                headers={'Authorization': 'Bearer ' + cfg.voice_gateway_token.get_secret_value()},
+            result = client.post(url.rstrip('/') + '/v1/stop',
+                headers={'Authorization': 'Bearer ' + token.get_secret_value()},
                 json=payload)
             result.raise_for_status()
         return True

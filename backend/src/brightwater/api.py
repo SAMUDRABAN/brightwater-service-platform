@@ -198,6 +198,60 @@ async def engineering_call(body: s.EngineeringCallInput, background_tasks: Backg
         return {"id": call_id, "state": "unknown", "purpose": "engineering"}
 
 
+@app.get("/v1/uk-tests/status", dependencies=OPERATOR)
+def uk_test_status(db: DB):
+    from brightwater.seed import CUSTOMERS
+    from brightwater.uk_test import available
+
+    return {"enabled": available(db, settings()),
+            "fixtures": [{"id": row[0], "name": row[1]} for row in CUSTOMERS]}
+
+
+@app.post("/v1/uk-tests", dependencies=OPERATOR, status_code=202)
+async def uk_test_call(body: s.UKTestInput, background_tasks: BackgroundTasks):
+    from brightwater.uk_test import UK_TEST_SECONDS, available, normalise_phone, prepare
+
+    cfg = settings()
+    with session() as db:
+        if not available(db, cfg):
+            raise Rejected("uk_test_disabled", "The UK test route is paused or unavailable")
+    try:
+        async with httpx.AsyncClient(timeout=4, follow_redirects=False) as client:
+            probe = await client.get(cfg.campaign_gateway_url.rstrip("/") + "/health/ready")
+            probe.raise_for_status()
+            ready = probe.json()
+            if ready.get("region") != "GB" or ready.get("enabled") is not True:
+                raise ValueError("UK gateway not admitted")
+    except (httpx.HTTPError, ValueError):
+        raise Rejected("voice_gateway_unavailable", "The UK voice service is not ready. No call was requested.", 503) from None
+    with session() as db, db.begin():
+        call, token = prepare(db, cfg, body)
+        call_id, state = call.id, call.state
+    if token is None:
+        return {"id": call_id, "state": state, "replayed": True}
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=False) as client:
+            response = await client.post(cfg.campaign_gateway_url.rstrip("/") + "/v1/outbound",
+                headers={"Authorization": "Bearer " + cfg.campaign_gateway_token.get_secret_value()},
+                json={"call_id": call_id, "session_token": token, "purpose": "campaign",
+                      "phone": normalise_phone(body.phone.get_secret_value()), "max_seconds": UK_TEST_SECONDS})
+            response.raise_for_status()
+            provider_id = response.json()["request_uuid"]
+        with session() as db, db.begin():
+            db.get(m.Call, call_id).provider_id = provider_id
+        from brightwater.managed.startup import prepare as warm_conversation
+        background_tasks.add_task(warm_conversation, call_id)
+        return {"id": call_id, "state": "dispatching"}
+    except Exception:
+        with session() as db, db.begin():
+            call = db.get(m.Call, call_id, with_for_update=True)
+            if call.state == "dispatching":
+                call.state = "unknown"
+                db.add(m.Followup(call_id=call.id, kind="internal_review", owner="Sarah", priority=1,
+                    detail="UK test initiation was not acknowledged. Reconcile before trying again.", requested=False))
+        return {"id": call_id, "state": "unknown"}
+
+
 @app.post("/v1/control/pause", dependencies=OPERATOR)
 def pause(db: DB):
     svc.control_lock(db)
@@ -209,6 +263,11 @@ def pause(db: DB):
         engineering.enabled = False
     else:
         db.add(m.Control(key="engineering", enabled=False))
+    uk_test = db.get(m.Control, "uk_test")
+    if uk_test:
+        uk_test.enabled = False
+    else:
+        db.add(m.Control(key="uk_test", enabled=False))
     return {"dialing_paused": True, "engineering_paused": True}
 
 
@@ -223,7 +282,8 @@ def call_detail(call_id: str, db: DB):
     value = db.get(m.Call, call_id)
     if not value:
         raise Rejected("not_found", "Call not found", 404)
-    return {**row(value, {"session_token_hash"}), "customer_name": svc.customer(db, value.customer_id).name,
+    return {**row(value, {"session_token_hash"}), "purpose": "uk_test" if value.time_band == "uk_test" else value.purpose,
+            "customer_name": svc.customer(db, value.customer_id).name,
             "events": [row(e) for e in db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call_id).order_by(m.CallEvent.occurred_at))],
             "bookings": [row(b) for b in db.scalars(select(m.Booking).where(m.Booking.call_id == call_id))],
             "arrangement": current(db, value)}
@@ -238,8 +298,8 @@ def campaign_status(db: DB):
 @app.get("/v1/dashboard", dependencies=OPERATOR)
 def dashboard(request: Request, db: DB):
     today = now().astimezone(UK).date()
-    call_rows = db.scalars(select(m.Call).where(m.Call.purpose == "campaign")).all()
-    booked_customers = set(db.scalars(select(m.Booking.customer_id).join(m.Call, m.Call.id == m.Booking.call_id).where(m.Booking.state == "confirmed", m.Call.purpose == "campaign")))
+    call_rows = db.scalars(select(m.Call).where(m.Call.purpose == "campaign", m.Call.time_band != "uk_test")).all()
+    booked_customers = set(db.scalars(select(m.Booking.customer_id).join(m.Call, m.Call.id == m.Booking.call_id).where(m.Booking.state == "confirmed", m.Call.purpose == "campaign", m.Call.time_band != "uk_test")))
     contacted = {c.customer_id for c in call_rows if c.dispatched_at}
     reached = {c.customer_id for c in call_rows if c.conversation}
     customer_count = db.scalar(select(func.count()).select_from(m.Customer).where(~m.Customer.id.startswith("ENGINEERING-")))
@@ -295,15 +355,22 @@ def campaign_admission(body: s.CampaignAdmission, db: DB):
     call = db.scalar(select(m.Call).where(m.Call.id == body.call_id).with_for_update())
     control = db.get(m.Control, "dialing")
     digest = hashlib.sha256(body.session_token.get_secret_value().encode()).hexdigest()
-    if (not cfg.dialing_enabled or configuration_issues(cfg) or not control or not control.enabled
-        or not call or call.purpose != "campaign" or call.state != "dispatching"
+    from brightwater.uk_test import available, is_uk_test
+    test = is_uk_test(call)
+    permitted = available(db, cfg) if test else (
+        cfg.dialing_enabled and not configuration_issues(cfg) and control and control.enabled)
+    if (not permitted or not call or call.purpose != "campaign" or call.state != "dispatching"
         or not call.session_token_hash or not secrets.compare_digest(call.session_token_hash, digest)
         or not call.dispatched_at or not timedelta(0) <= now() - call.dispatched_at <= timedelta(seconds=60)):
         raise Rejected("campaign_not_admitted", "No current approved campaign admission", 403)
     destination = db.get(m.Destination, call.destination_id)
     if not destination or destination.phone != body.phone.get_secret_value():
         raise Rejected("destination_mismatch", "The carrier destination must match the approved call", 403)
-    svc.check_dial_policy(db, svc.customer(db, call.customer_id), destination, now(), exclude_call=call.id)
+    if test:
+        if not destination.enabled or svc.suppressed(db, call.customer_id, destination.phone):
+            raise Rejected("suppressed", "The test recipient opted out", 403)
+    else:
+        svc.check_dial_policy(db, svc.customer(db, call.customer_id), destination, now(), exclude_call=call.id)
     return {"admitted": True, "purpose": "campaign", "call_id": call.id}
 
 

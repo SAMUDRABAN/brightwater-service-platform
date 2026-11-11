@@ -28,3 +28,9 @@ The **Call my test phone** button is for the India route. For UK qualification, 
 ## Outcome review
 
 If an answered attempt is still marked **Needs review**, Sarah can open the call record and record a supported disposition with an evidence note. An answered call without adequate evidence stays available for review. The action cannot create a booking or claim that an emergency message was played.
+
+## Attended test form
+
+An administrator can open **Call controls → UK test call**, choose the fictional customer, enter the recipient’s UK phone number and confirm consent to the recorded call. The form creates a separate roleplay record and opens it in **Calls**. It leaves automatic reminders paused and never registers the recipient against the original customer record.
+
+The optional London overlay `infra/digitalocean/compose.uk-voice.yaml` provides the Twilio gateway. Give it a private env file, a separate Redis database index, a distinct gateway token and an HTTPS hostname. The API uses `BW_CAMPAIGN_GATEWAY_URL` and `BW_CAMPAIGN_GATEWAY_TOKEN` to reach it. Set `BW_UK_TEST_ENABLED` and `BW_UK_TEST_CALLER_ID` for the attended form. Keep `BW_DIALING_ENABLED=false` for review calls. The form enforces the UK calling window and the fixture’s preference, checks suppression, and admits only one active call at a time. Use **Pause new calls** to close attended admission.

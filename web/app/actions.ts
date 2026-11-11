@@ -105,6 +105,40 @@ export async function requestEngineeringCall(form: FormData) {
   redirect(`/system?notice=${encodeURIComponent(notice)}`);
 }
 
+export async function requestUKTestCall(form: FormData) {
+  const key = value(form, "request_key");
+  if (!/^[a-f0-9-]{36}$/.test(key)) redirect("/system?notice=Invalid%20request");
+  let callId: string | undefined;
+  let notice = "The request could not be confirmed. Check Calls before trying again.";
+  try {
+    const response = await fetch(`${process.env.BW_API_URL}/v1/uk-tests`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${await staffToken()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        customer_id: value(form, "customer_id"),
+        phone: value(form, "phone"),
+        consent: value(form, "consent") === "on",
+        request_key: key,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(18000),
+    });
+    const result = await response.json();
+    if (response.ok && typeof result.id === "string" && /^[a-f0-9-]{36}$/.test(result.id))
+      callId = result.id;
+    else
+      notice = messages[result.error] || result.message || "The UK test request was not accepted.";
+  } catch {
+    // A timed-out carrier request may have been accepted.
+  }
+  revalidatePath("/system");
+  if (callId) redirect(`/calls/${callId}`);
+  redirect(`/system?notice=${encodeURIComponent(notice)}`);
+}
+
 export async function updateFollowup(form: FormData) {
   const id = value(form, "followup_id");
   if (!/^[a-f0-9-]{36}$/.test(id)) redirect("/callbacks?notice=Invalid%20follow-up");

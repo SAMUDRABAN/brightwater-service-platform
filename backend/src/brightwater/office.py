@@ -59,7 +59,7 @@ def call_row(call, name):
         "id": call.id,
         "customer_id": call.customer_id,
         "customer_name": name,
-        "purpose": call.purpose,
+        "purpose": "uk_test" if call.time_band == "uk_test" else call.purpose,
         "state": call.state,
         "outcome": call.outcome,
         "summary": call.summary,

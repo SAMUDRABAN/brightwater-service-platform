@@ -12,7 +12,7 @@ import {
   type Followup,
 } from "../../lib/api";
 import { arrivalWindow, gbDate } from "../../lib/format";
-import { pauseCalling, requestCall, requestEngineeringCall } from "../actions";
+import { pauseCalling, requestCall, requestEngineeringCall, requestUKTestCall } from "../actions";
 import { BookingTable, CallTable, FollowupList } from "../../components/Records";
 import { Empty, ErrorState, PageHeading, PanelHeading, Status } from "../../components/Ui";
 import { Icon } from "../../components/Icon";
@@ -583,6 +583,11 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
     landlords_due: number;
     blockers: string[];
   }>("/v1/campaign/status");
+  const ukTest = admin
+    ? await api<{ enabled: boolean; fixtures: { id: string; name: string }[] }>(
+        "/v1/uk-tests/status",
+      )
+    : null;
   const engineering = admin
     ? await api<{
         enabled: boolean;
@@ -651,6 +656,51 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
             Pausing also disables attended test admission. Calls already in progress may continue.
           </small>
         </section>
+        {ukTest && (
+          <section className="panel setting-panel">
+            <div className="setting-icon">
+              <Icon name="phone" size={23} />
+            </div>
+            <h2>UK test call</h2>
+            <p>
+              Choose the fictional customer the recipient will play. The call and its outcome are
+              saved in Calls.
+            </p>
+            {!ukTest.enabled && <p role="status">The UK test route is paused or unavailable.</p>}
+            <form action={requestUKTestCall} className="controls">
+              <input type="hidden" name="request_key" value={randomUUID()} />
+              <label htmlFor="uk-test-customer">Fictional customer</label>
+              <select id="uk-test-customer" name="customer_id" defaultValue="" required>
+                <option value="" disabled>
+                  Choose a customer
+                </option>
+                {ukTest.fixtures.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.name}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="uk-test-phone">UK recipient number</label>
+              <input
+                id="uk-test-phone"
+                type="tel"
+                name="phone"
+                autoComplete="off"
+                maxLength={25}
+                placeholder="+44 or 07…"
+                required
+              />
+              <label>
+                <input type="checkbox" name="consent" required /> The recipient has agreed to this
+                recorded test call.
+              </label>
+              <button className="button" type="submit" disabled={!ukTest.enabled}>
+                <Icon name="phone" size={16} />
+                Place UK test call
+              </button>
+            </form>
+          </section>
+        )}
         {engineering && (
           <section className="panel setting-panel">
             <div className="setting-icon">

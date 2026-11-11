@@ -1,0 +1,13 @@
+import /etc/caddy/Caddyfile.main
+
+{$BW_UK_GATEWAY_HOST} {
+    request_body {
+        max_size 128KB
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Cache-Control no-store
+    }
+    reverse_proxy uk-voice:8788
+}

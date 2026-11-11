@@ -164,11 +164,13 @@ export default async function CallPage({
           <div>
             <dt>Type</dt>
             <dd>
-              {call.purpose === "browser_simulation"
-                ? "Browser test"
-                : call.purpose === "engineering"
-                  ? "Attended test"
-                  : "Customer campaign"}
+              {call.purpose === "uk_test"
+                ? "UK test"
+                : call.purpose === "browser_simulation"
+                  ? "Browser test"
+                  : call.purpose === "engineering"
+                    ? "Attended test"
+                    : "Customer campaign"}
             </dd>
           </div>
         </dl>
