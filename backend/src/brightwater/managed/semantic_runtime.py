@@ -23,6 +23,7 @@ def snapshot(db, call, *, conversation=None, proposal_id=None):
     phone = call.purpose in {'engineering', 'campaign'}
     rows = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id).order_by(
         m.CallEvent.occurred_at, m.CallEvent.received_at)))
+    interrupted_agent_context = ''
     if phone:
         user = next((e for e in reversed(rows) if e.kind == 'user_utterance'
                      and e.payload.get('source') == 'plivo_elevenlabs_observer'), None)
@@ -36,6 +37,16 @@ def snapshot(db, call, *, conversation=None, proposal_id=None):
                        and e.occurred_at < user.occurred_at), None)
         completed = bool(speech and speech.payload.get('playback_completed') is True and speech.payload.get('interrupted') is False)
         speech_text = speech.payload.get('text', '') if completed else ''
+        earlier = [e for e in rows if e.occurred_at < user.occurred_at]
+        prior_user = next((e for e in reversed(earlier) if e.kind == 'user_utterance'
+                           and e.payload.get('source') == 'plivo_elevenlabs_observer'), None)
+        if call.identity_verified and prior_user and type(prior_user.payload.get('native_event_id')) is int:
+            pending = next((e for e in reversed(earlier) if e.kind == 'turn_state'
+                            and e.payload.get('source') == 'managed_agent_prompt'
+                            and e.payload.get('native_event_id') == prior_user.payload['native_event_id']
+                            and e.occurred_at > prior_user.occurred_at), None)
+            if pending and (not completed or pending.occurred_at > speech.occurred_at):
+                interrupted_agent_context = pending.payload.get('text', '')
         source_id, playback_id = user.id, speech.id if speech else ''
         history = [{'role': 'agent' if e.kind == 'agent_utterance' else 'user', 'text': e.payload.get('text', ''), 'interrupted': bool(e.payload.get('interrupted')), 'completed': e.payload.get('playback_completed') is True}
                    for e in rows if e.kind in {'agent_utterance', 'user_utterance'} and e.occurred_at <= user.occurred_at][-8:]
@@ -59,6 +70,7 @@ def snapshot(db, call, *, conversation=None, proposal_id=None):
             'source_id': source_id, 'playback_id': playback_id,
             'proposal_id': proposal.id if proposal else '', 'fingerprint': proposal.fingerprint if proposal else '',
             'history': history, 'completed_agent_speech': speech_text,
+            'interrupted_agent_context': interrupted_agent_context,
             'callback_previously_declined': previously_declined,
             'extract_readback': bool(proposal and speech_text and not complete_readback(speech_text, proposal)),
             'speech_completed': bool(speech and speech.payload.get('playback_completed') is True

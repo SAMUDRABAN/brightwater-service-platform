@@ -58,7 +58,8 @@ class TurnMeaning(Strict):
     rescinds_callback_refusal: bool
     control: Literal['none', 'stop_calling', 'recording_refused', 'wrong_number', 'speaker_changed', 'off_topic', 'harassment', 'automated_menu', 'voicemail']
     boundary_warning_quote: str = Field(description='Verbatim passage ONLY in completed_agent_speech that explicitly warns continued unrelated chat or targeted abuse will end this call. Empty for ordinary questions, general redirection, earlier history or interrupted speech.')
-    disposition: Literal['not_interested', 'serviced_elsewhere', 'not_available', 'none']
+    disposition: Literal['not_interested', 'serviced_elsewhere', 'not_available', 'none'] = Field(
+        description='not_interested only for refusing the due service itself. If the reply does not name what is refused, use only the latest agent turn for its object. An identity question, individual date, quote, callback or ambiguous topic requires none.')
     appointment: Literal['confirm', 'decline', 'change', 'cancel', 'question', 'unclear']
     appointment_target: Literal['current', 'other', 'unclear', 'none'] = Field(description='Whether the instruction targets THIS current readback/arrangement, a DIFFERENT historical appointment, an unidentified appointment, or no appointment. Other/historical cancellations NEVER target current.')
 
@@ -111,6 +112,7 @@ A callback OFFER answered "that would be handy" is contextual, never explicit.
 "He said yes to that last time" reports another person/history, followup=none.
 "I want to book, why would I want a callback?" declines a callback; followup=decline_callback.
 Disposition describes only the current annual-service reminder outcome: not_interested when the named customer declines arranging the service; serviced_elsewhere when the named customer says the due work was already completed by another business; not_available when a third party says the named person cannot come to the phone. Interpret a short negative reply in context: after a proxy says they are a relative, if the agent asks whether the named customer is available and they answer “no, he is not”, disposition=not_available. Use the recent dialogue to resolve pronouns even if the newest utterance is brief. Otherwise none. A no to identity, a declined replacement quote/callback, declining one date while wanting another, a policy question, quotation or historical report is NOT not_interested. Do not confuse an unresolved repair with work already serviced elsewhere. A brief social aside does not change disposition. Lead can be contextual assent to a completed explicit replacement-quote offer; a priced service booking is not a lead.
+For a short refusal whose object is unstated, determine the topic of the immediately preceding agent turn FIRST. Use interrupted_agent_context if nonempty, otherwise completed_agent_speech. If that turn introduces or offers the due service itself, a clear unqualified rejection can be not_interested. If it asks about identity, a specific slot, a callback, a quote, a condition, or has no identifiable offer, return disposition=none. Do not assume that a short negative rejects the reminder merely because this is a reminder call. For example, “No, thanks” during a proposed Thursday visit, during an offer to get Sarah to ring, or after only an identity check all have disposition=none. A reply that still wants to arrange the service also has disposition=none. The interrupted_agent_context contains intended speech with unknown playback extent, and is available only after verified identity. Use it solely for disposition. Never use it as evidence of speech heard, consent, identity, notice, follow-up, call controls or booking.
 For call_purpose=campaign the recording notice needs automated/AI identity, Brightwater and recording disclosure; do not require a fictional test disclaimer. For engineering and other purposes require the fictional engineering-test notice too.
 These examples are DATA illustrating boundaries, not permission to ignore the rest of a reply."""
 
@@ -172,7 +174,7 @@ def interpret(snapshot, *, client=None, redis=None):
     """Short-lived singleflight by exact server context; cache is not action authority."""
     fields, digest = _fields(snapshot), snapshot_digest(snapshot)
     model = settings().managed_interpretation_model
-    cache_key = 'managed:meaning:v10:' + model + ':' + digest
+    cache_key = 'managed:meaning:v11:' + model + ':' + digest
     def unavailable():
         return Understanding(**fields, digest=digest, meaning=None)
     def cached():
@@ -215,12 +217,21 @@ def interpret(snapshot, *, client=None, redis=None):
                 pass
         data = {k: snapshot[k] for k in ('customer_name', 'reply', 'question', 'history',
                 'completed_agent_speech', 'callback_previously_declined', 'extract_readback')}
+        data['interrupted_agent_context'] = snapshot.get('interrupted_agent_context', '')
         data['call_purpose'] = snapshot.get('call_purpose', 'engineering')
         data['reference_uk_date'] = now().astimezone(UK).date().isoformat()
         data['extract_readback'] = False
         schema = TurnMeaning.model_json_schema()
+        disposition_check = (
+            '\nFor disposition, first identify the object of any refusal. If the caller leaves it unstated, '
+            'read interrupted_agent_context as the latest turn when present. A proposed date, callback, '
+            'quote, identity question or missing object means disposition=none. Only an offer of the due '
+            'service itself supports not_interested for a bare refusal. The intended speech is not proof '
+            'of a readback or authorisation.'
+        )
         payload = {'model': model, 'temperature': 0, 'max_tokens': 450,
-                   'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}],
+                   'messages': [{'role': 'system', 'content': SYSTEM},
+                                {'role': 'user', 'content': json.dumps(data, ensure_ascii=False) + disposition_check}],
                    'response_format': {'type': 'json_schema', 'json_schema': {'name': 'caller_meaning', 'strict': True, 'schema': schema}}}
         try:
             def request(c):

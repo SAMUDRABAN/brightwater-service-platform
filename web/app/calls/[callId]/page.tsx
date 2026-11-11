@@ -186,7 +186,7 @@ export default async function CallPage({
           {call.media_state === "available" && (
             <audio
               controls
-              preload="none"
+              preload="metadata"
               src={`/api/calls/${call.id}/recording`}
               aria-label={`Recording of ${call.customer_name || call.customer_id} call`}
             />
@@ -290,7 +290,7 @@ export default async function CallPage({
                   <time dateTime={e.occurred_at}>{gbTime(e.occurred_at)}</time>
                 </div>
                 <p>
-                  {typeof e.payload.text === "string"
+                  {typeof e.payload.text === "string" && e.payload.text.trim()
                     ? e.payload.text
                     : "Transcript text unavailable"}
                 </p>

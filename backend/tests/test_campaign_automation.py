@@ -12,7 +12,7 @@ from brightwater import services as svc
 from brightwater.campaign import configuration_issues, due_customers, enqueue_due, voicemail_result
 from brightwater.config import settings
 from brightwater.db import session
-from brightwater.managed.semantic_runtime import record_meaning
+from brightwater.managed.semantic_runtime import record_meaning, snapshot
 from brightwater.policy import now
 
 AT = datetime(2026, 11, 5, 12, tzinfo=UTC)
@@ -71,6 +71,34 @@ def test_dynamic_outcome_uses_original_turn_and_stops_only_the_right_retry_polic
         assert db.scalar(select(func.count()).select_from(m.CallEvent).where(m.CallEvent.kind == disposition)) == 1
         svc.finalise(db, call, 'Current caller decision recorded')
         assert call.outcome == {'not_interested':'Not interested','serviced_elsewhere':'Serviced elsewhere','not_available':'Not available'}[disposition]
+
+
+@pytest.mark.parametrize(('verified', 'prompt_turn', 'expected'), [
+    (True, 80, True),
+    (False, 80, False),
+    (True, 1, False),
+])
+def test_interrupted_offer_context_does_not_replace_playback_evidence(verified, prompt_turn, expected):
+    from test_managed_phone import event
+    opening = 'Am I speaking with Helen Price?'
+    offer = 'Your boiler service is due in December. Would you like to arrange it?'
+    with session() as db, db.begin():
+        call, _ = make_call(db, verified=verified)
+        at = now() - timedelta(seconds=10)
+        event(db, call, 'agent_utterance', at, source='plivo_elevenlabs_observer',
+              text=opening, playback_completed=True, interrupted=False)
+        event(db, call, 'user_utterance', at + timedelta(seconds=1), source='plivo_elevenlabs_observer',
+              text='Yes.', speech_timing_verified=True, native_event_id=80)
+        event(db, call, 'turn_state', at + timedelta(seconds=5), source='managed_agent_prompt',
+              text=offer, completed=False, native_event_id=prompt_turn)
+        event(db, call, 'user_utterance', at + timedelta(seconds=7), source='plivo_elevenlabs_observer',
+              text='No, thank you.', speech_timing_verified=True, native_event_id=144)
+        event(db, call, 'agent_utterance', at + timedelta(seconds=8), source='plivo_elevenlabs_observer',
+              text='', playback_completed=False, interrupted=True)
+
+        turn = snapshot(db, call)
+        assert turn['interrupted_agent_context'] == (offer if expected else '')
+        assert turn['completed_agent_speech'] == opening
 
 
 def test_a_completed_conversation_without_saved_resolution_reaches_sarah_once():
