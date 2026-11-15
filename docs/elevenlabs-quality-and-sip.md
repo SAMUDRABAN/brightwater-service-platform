@@ -38,6 +38,16 @@ Certificate-verified TLS probes from the London app host timed out on the defaul
 
 For the first comparison, use the same consenting handset, agent voice and script on both routes. Measure answer to greeting, end of caller speech to first audible reply, and time to yield on an interruption. Compare equivalent scripted turns with and without CRM work separately. Before enabling SIP booking, verify equivalent call-bound identity, recording, current caller authorisation and completed playback evidence, then confirm CRM booking and opt-out behaviour. Use an isolated test profile for audio-only qualification.
 
+## UK agent-to-agent telephone QA
+
+Use **Brightwater QA — UK synthetic customer receiver** on the dedicated Twilio test line. The receiver plays the fictional Peter Lund role, has no CRM or outgoing-call tools, and has a 145-second limit. Assign it to the test line only for a supervised run. In Brightwater **Call controls → UK test call**, select Peter Lund and use the dedicated owned test destination. After the call, unassign the receiver and review the CRM outcome, diary entry, recording and both ElevenLabs conversation traces.
+
+The first run connected both agents over Twilio, verified identity, looked up slots and prepared a booking. The receiver transcribed the spoken door number fourteen as forty and asked for a correction. The call reached the receiver's time limit before agreement, and no appointment was saved. The CRM classified the attempt as **No answer** even though Twilio recorded a connected conversation. [First call record](https://office.46.101.11.137.sslip.io/calls/b002e40c-c1f4-4b96-8ee0-5cd70c0598ed)
+
+On the second call, the receiver understood the address and asked Alex to book. The CRM rejected Alex's readback as incomplete and saved no appointment. Alex re-read the details and the receiver ended the call before a further confirmation. Twilio recorded 110 seconds and the protected recording decoded to 104.4 seconds. The receiver was unassigned after both runs. [Second call record](https://office.46.101.11.137.sslip.io/calls/50ed7b90-8dc8-456d-ba03-528097ae6c36)
+
+These are repeatable synthetic carrier tests with real audio and CRM effects. Use the fictional diary and keep customer dialling paused. Both numbers are managed by Twilio, so this setup measures that route, without a mobile handset, mobile radio conditions or human response behaviour. Direct SIP qualification uses a separate media path.
+
 ## Direct Plivo SIP: prepared, not activated
 
 The existing owned Plivo number is now registered in ElevenLabs as a SIP number. A new dedicated outbound Plivo trunk uses dedicated digest credentials, secure signaling/media and explicit PCMU/8000 + PCMA/8000 codecs. The trunk is disabled, no agent is assigned to the imported number, the Plivo number's original application is unchanged, and the production application still uses its working recorded India bridge. Nothing was ported or purchased.
