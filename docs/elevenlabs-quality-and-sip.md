@@ -48,6 +48,22 @@ On the second call, the receiver understood the address and asked Alex to book. 
 
 These are repeatable synthetic carrier tests with real audio and CRM effects. Use the fictional diary and keep customer dialling paused. Both numbers are managed by Twilio, so this setup measures that route, without a mobile handset, mobile radio conditions or human response behaviour. Direct SIP qualification uses a separate media path.
 
+### 16 November regression run
+
+Alex now reads the prepared wording from the CRM, including the visit year and arrival window. The carrier-backed confirmation rules still require a completed readback and a fresh reply.
+
+| Scenario | Observed result |
+| --- | --- |
+| Homeowner booking | One £95 booking saved after one confirmation. The recording is available. [Call record](https://office.46.101.11.137.sslip.io/calls/a58517d8-432d-4533-a367-37883585bbdf) |
+| Human callback | The CRM saved **Callback requested**. The recording is available. [Call record](https://office.46.101.11.137.sslip.io/calls/5eaef052-91b9-431b-aaf8-aef248821e3c) |
+| Gas smell | The CRM saved **Gas emergency advice**, and completed playback included the emergency number. [Call record](https://office.46.101.11.137.sslip.io/calls/6b69bdec-b321-4bd2-b8fd-4cad67899e9a) |
+| Proxy answer | No account details were disclosed. The caller said Joan was unavailable and also asked why Alex was calling. The classifier missed **Not available**. The revised classifier returned the correct outcome in replay; a fresh telephone retest is pending. [Call record](https://office.46.101.11.137.sslip.io/calls/6f3666c5-7389-44ce-a51c-7aeb2dd78940) |
+| Voicemail detection and three-property landlord | Twilio recorded zero connected audio seconds for each. ElevenLabs logged receiver initialisation failures and the workspace reported zero credits remaining. Both scenarios still need a new call. Full voicemail delivery also needs an approved callback number and a mailbox check. |
+| Direct SIP | The planned audio-only call was cancelled before dialling when the provider reported zero credits. |
+| Permanent opt-out | Covered by the backend regression suite and the earlier India suppression record. A fresh live opt-out on the reusable UK test number would suppress that number. The spoken acknowledgement still needs a live test with an isolated or disposable destination. |
+
+517 backend tests passed after the proxy change. Twelve native ElevenLabs checks passed before credits ran out. The receiver was unassigned after testing. The normal attended daily limit was restored to six and automatic customer calling remained paused.
+
 ## Direct Plivo SIP: prepared, not activated
 
 The existing owned Plivo number is now registered in ElevenLabs as a SIP number. A new dedicated outbound Plivo trunk uses dedicated digest credentials, secure signaling/media and explicit PCMU/8000 + PCMA/8000 codecs. The trunk is disabled, no agent is assigned to the imported number, the Plivo number's original application is unchanged, and the production application still uses its working recorded India bridge. Nothing was ported or purchased.
