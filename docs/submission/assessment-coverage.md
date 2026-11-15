@@ -21,9 +21,9 @@ The 11 November 2026 20:19 UK call completed via Twilio and ElevenLabs. It verif
 ## Remaining review and customer launch checks
 
 - **Live review.** Trigger a call to the assessor's agreed number during the review and open the resulting CRM record. The successful UK rehearsal closes the UK route and straightforward booking evidence gap.
-- **Voicemail and opt-out.** Verify complete first-voicemail playback with an approved office callback number, and verify the full spoken opt-out acknowledgement on a fresh consented test. Permanent suppression was saved in the existing test.
+- **Voicemail and opt-out.** Configure an approved UK office callback number, then verify complete first-voicemail playback. Verify the full spoken opt-out acknowledgement on a fresh consented test. Permanent suppression was saved in the existing test.
 - **Outcome taxonomy.** Agree how to map answered technical failures to the brief's 13 outcomes. The CRM retains unresolved attempts as **Needs review**, with an evidence-based staff review action.
-- **Conversation and quality.** Check the diary acknowledgement duplication in the transcript against handset audio, and verify the refusal goodbye. The callback record covers booking recovery. Broader interruption and latency checks remain part of customer launch qualification.
+- **Conversation and quality.** The forced diary preamble was removed and the revised replies passed native replays. Verify the change and the refusal goodbye on a handset. The callback record covers booking recovery. Cross-caller interruption and latency checks remain part of customer launch qualification.
 - **Customer launch.** Automatic calling stays paused. Verify the real office callback route and production campaign permissions, authoritative diary and notification arrangements, including delivery of the evening-before text. Live transfer is optional.
 
 ## CRM controls checked

@@ -489,7 +489,11 @@ def test_phone_quality_never_hides_consent_or_adds_speech_before_commit():
     phone = config('kb', 'https://example.test', 'provider-secret', phone=True)
     browser = config('kb', 'https://example.test', 'provider-secret')
     tools = {t['name']: t for t in phone['conversation_config']['agent']['prompt']['tools']}
-    assert tools['check_availability']['pre_tool_speech'] == 'force'
+    assert tools['check_availability']['pre_tool_speech'] == 'off'
+    assert 'Skip the diary preamble.' in phone['conversation_config']['agent']['prompt']['prompt']
+    browser_tool = next(t for t in config('kb', 'https://example.test', 'provider-secret')
+                        ['conversation_config']['agent']['prompt']['tools'] if t['name'] == 'check_availability')
+    assert browser_tool['pre_tool_speech'] == 'force'
     assert tools['prepare_booking']['pre_tool_speech'] == 'off'
     assert tools['record_followup']['pre_tool_speech'] == 'force'
     for name in ['confirm_identity', 'confirm_booking', 'cancel_arrangement', 'finish_conversation']:

@@ -26,7 +26,7 @@ TOOL_DEFINITIONS["check_availability"][1].update({
 })
 
 
-def tools(base_url=None, secret_id=None, *, profile="balanced"):
+def tools(base_url=None, secret_id=None, *, phone=False, profile="balanced"):
     def describe(value):
         if isinstance(value, dict):
             if "type" in value:
@@ -43,7 +43,7 @@ def tools(base_url=None, secret_id=None, *, profile="balanced"):
         arguments = {"type": "object", "description": "Business operation arguments", "properties": parameters, "required": [p for p in parameters if p not in OPTIONAL_ARGUMENTS.get(name, set())]}
         if base_url and secret_id:
             result.append({"type": "webhook", "name": name, "description": description,
-                "response_timeout_secs": 10, "pre_tool_speech": "force" if name == "record_followup" or (profile != "baseline" and name == "check_availability") else "off", "interruption_mode": "allow",
+                "response_timeout_secs": 10, "pre_tool_speech": "force" if name == "record_followup" or (not phone and profile != "baseline" and name == "check_availability") else "off", "interruption_mode": "allow",
                 "api_schema": {"url": base_url + "/v1/managed/tools/" + name, "method": "POST",
                     "request_headers": {"X-Brightwater-Provider": {"secret_id": secret_id},
                         "X-Brightwater-Session": {"variable_name": "secret__session_token"},
@@ -65,6 +65,13 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
     quality = quality or {}
     prompt = Path(__file__).with_name("prompt.txt").read_text()
     if phone:
+        start = prompt.index("For an availability lookup,")
+        stop = prompt.index(" Never say saving", start)
+        prompt = prompt[:start] + (
+            "Call check_availability immediately after the caller agrees to look for times. "
+            "Skip the diary preamble. Start your next spoken reply with the actual options "
+            "or the reason no slots match."
+        ) + prompt[stop:]
         start = prompt.index("When you hear a real voicemail")
         stop = prompt.index(" For a current keypad menu", start)
         prompt = prompt[:start] + (
@@ -89,7 +96,7 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
                       "disable_first_message_interruptions": False,
                       "dynamic_variables": {"dynamic_variable_placeholders": {"customer_name": "Helen Price"}},
                       "prompt": {"prompt": prompt, "llm": "gpt-4.1", "temperature": 0.4, "max_tokens": 300,
-                                 "ignore_default_personality": True, "enable_parallel_tool_calls": False, "tools": [*tools(base_url, secret_id, profile=profile),
+                                 "ignore_default_personality": True, "enable_parallel_tool_calls": False, "tools": [*tools(base_url, secret_id, phone=phone, profile=profile),
                                      {"type": "system", "name": "end_call",
                                       "description": "End after the brief truthful closing for a completed task, caller goodbye, annual-service refusal or work serviced elsewhere. For an explicit refusal/serviced-elsewhere closing, a failed finish_conversation must not cause another offer or repeated write. Voicemail or automated greetings are never a caller goodbye. Call finish_conversation first and require stopped=true or finished=true. Speak any approved_message before end_call. Never end a proxy call before recording unavailability with finish_conversation. For misuse, first use finish_conversation and require stopped=true or finished=true. Never end for a complaint, service frustration, isolated swearing, assistive speech or uncertainty; finished=false means continue. Give one polite generic goodbye, with no account disclosure or invented callback." + (" Never invoke this tool for voicemail or an opt-out. The phone gateway owns those closings." if phone else ""),
                                       "params": {"system_tool_type": "end_call"}}],

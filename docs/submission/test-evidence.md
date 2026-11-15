@@ -17,6 +17,21 @@ The 20:19 UK call used the CRM's attended UK test form and the Twilio UK route t
 
 The transcript repeats “Let me check the diary” in adjacent entries. The handset test established booking completion. The evening-before text was described during the call. SMS delivery was outside this check.
 
+## 15 November voice follow-up
+
+The 11 November UK conversation log records the diary acknowledgement twice, once as forced pre-tool speech and once in the spoken result. The UK and India ElevenLabs profiles now start the availability lookup directly and speak the actual result. The first verified service offer is shorter. The full address, postcode, window, price and payment remain in the final booking readback.
+
+On the successful UK call, provider TTS started in 69–93 ms. Four business webhooks took 1.52–1.99 seconds each. Across the available pre-change provider history, the first spoken response after a caller turn had these timings:
+
+| Route | Retained calls | Replies with timing | Min / median / max |
+| --- | ---: | ---: | --- |
+| UK | 2 | 4 | 1.57 / 3.56 / 3.91 s |
+| India | 7 | 38 | 1.05 / 2.74 / 9.54 s |
+
+These are ElevenLabs silence-to-audio timings and exclude carrier delivery to the handset. The sample is from attended tests and does not provide a representative across-caller or interruption baseline. Two native replays returned the diary options directly. Sixteen native regressions and 517 backend tests passed. Fresh handset comparisons are needed to quantify the effect.
+
+For the next handset comparison, record the first audible response after the caller stops, whether the agent yields during a correction, and whether a brief backchannel clips its reply. Use consenting recipients and preserve the time and outcome in the CRM. Run first voicemail on a fresh test destination after configuring an approved UK callback number, then verify the full stored message in the mailbox. Test opt-out last on a separately consented destination and check both the spoken acknowledgement and subsequent suppression through eligibility checks. Customer campaign admission remains paused.
+
 ## Additional evidence and retests
 
 - The earlier 19:45 UK attempt verified identity and retained a recording. It missed the refusal during an interrupted offer and remains marked **Needs review**. A read-only replay with the updated classifier returned **Not interested**. The spoken refusal goodbye still needs a handset check.

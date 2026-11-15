@@ -109,7 +109,7 @@ Private caller recordings, credentials, database dumps and the original assessme
 
 - Use a separately consented recipient for each attended test. Assessment sample numbers remain blocked. UK campaign and attended-call admission are separate.
 - The reviewer live call is a separate assessment step. First-voicemail playback, the spoken opt-out acknowledgement and treatment of unclassified answered failures still need verification or agreement.
-- The UK booking call completed identity and confirmation without a retry. Its transcript repeats the diary acknowledgement. The saved callback evidence is from booking recovery.
+- The UK booking call completed identity and confirmation without a retry. After a repeated diary acknowledgement in that call, both phone profiles now go straight to availability results. Native replays passed and handset comparison is pending.
 - Independent voice/conversation ratings, complete end-to-end latency measurements, enterprise SSO/MFA, live-diary integration, monitoring and recovery/high-availability qualification remain work.
 
 See [release readiness](docs/release-readiness.md), [call-purpose safeguards](docs/call-purpose-boundaries.md), [changelog](CHANGELOG.md), [engineering conventions](docs/engineering-conventions.md) and [ownership notices](NOTICE.md). Historical implementation notes are retained under `docs/`; current status above and in the assessment coverage takes precedence over earlier checkpoints.
