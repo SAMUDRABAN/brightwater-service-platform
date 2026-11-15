@@ -64,6 +64,34 @@ Alex now reads the prepared wording from the CRM, including the visit year and a
 
 517 backend tests passed after the proxy change. Twelve native ElevenLabs checks passed before credits ran out. The receiver was unassigned after testing. The normal attended daily limit was restored to six and automatic customer calling remained paused.
 
+### Creator-plan retests
+
+The upgraded workspace was verified with 121,000 available credits before testing. The earlier credit-blocked tests were resumed on the two owned Twilio lines.
+
+| Scenario | Saved outcome |
+| --- | --- |
+| Proxy answer | **Not available**. The transcript contains the opening identity question and no account disclosure. [Call record](https://office.46.101.11.137.sslip.io/calls/15c9b5ed-4b04-4c16-a5e7-2796887ae212) |
+| Synthetic voicemail greeting | **Voicemail**. The CRM recorded the detection. Full mailbox delivery remains open pending a real approved callback number and receiving mailbox. [Call record](https://office.46.101.11.137.sslip.io/calls/fc0a7d1b-7cc9-4c43-a138-cc70624c3e4c) |
+| Multi-property landlord | **Booked**. One £180 booking with three confirmed gas safety visits after one consent turn. The protected recording decoded to 218.5 seconds. [Call record](https://office.46.101.11.137.sslip.io/calls/b7fc415a-cd4c-4f4e-b224-70e152ca9d62) |
+
+### Direct SIP call
+
+The first audio-only probe reached Twilio termination. ElevenLabs then rejected the receiving agent at its daily limit. A second probe with a temporarily higher receiver limit completed **28 seconds of two-way audio**. ElevenLabs recorded both scripted receiver answers, and Twilio showed completed SIP termination and inbound legs. This verifies the direct route can carry an agent-to-agent call. Its effect on end-to-end speed and the CRM booking and recording safeguards still needs a controlled comparison.
+
+The original receiver limit was restored, the receiver was unassigned, and the temporary SIP credential mapping was removed. Automatic customer calling remains paused.
+
+### Model comparison
+
+Six native behaviour cases per model checked consent, date changes, engineer questions, voicemail, emergency handling and a three-property readback. All three models passed the six checks using Brightwater's full agent instructions and tools. A partial-override run omitted the tools and was excluded.
+
+| Model | Behaviour checks | Median text-to-first-audio |
+| --- | ---: | ---: |
+| GPT-4.1 | 6/6 | 0.957 s |
+| Gemini 3.5 Flash-Lite | 6/6 | 0.975 s |
+| GPT-6 Luna | 6/6 | 1.233 s |
+
+The speed probe used three synthetic text turns per model, the same Eleven v4 Turbo voice configuration and an authenticated WebSocket with no diary tools. It excludes speech recognition, handset delivery and CRM time. GPT-4.1 remains the deployed model. The small difference between GPT-4.1 and Flash-Lite does not establish a reliable speed advantage for either.
+
 ## Direct Plivo SIP: prepared, not activated
 
 The existing owned Plivo number is now registered in ElevenLabs as a SIP number. A new dedicated outbound Plivo trunk uses dedicated digest credentials, secure signaling/media and explicit PCMU/8000 + PCMA/8000 codecs. The trunk is disabled, no agent is assigned to the imported number, the Plivo number's original application is unchanged, and the production application still uses its working recorded India bridge. Nothing was ported or purchased.
