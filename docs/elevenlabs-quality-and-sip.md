@@ -30,6 +30,14 @@ Six native criteria evaluate truthful saved outcomes, contextual consent, bounde
 
 Authenticated provider metrics from the failed twelfth owner call reported TTS first-byte median0.067s across8 speech responses and first-audio-since-silence median2.207s across8 responses. LLM first-byte median was0.612s across14 generations; silence-before-initiation median0.304s across8 responses. These are vendor stage measurements from one call, not handset percentiles or independent participant samples. They support investigating model/tool roundtrips rather than treating voice synthesis alone as the cause of pauses. The added independent booking-intent classifier still adds a processing step and needs timing qualification.
 
+## UK Twilio SIP comparison
+
+A separate secure Twilio outbound trunk and an unassigned ElevenLabs SIP entry were staged for the existing UK caller ID. The trunk has no mapped authentication list, associated number or inbound routes. The existing number configuration was verified after staging. The UK media relay remains the working call route and customer campaign dialling remains paused.
+
+Certificate-verified TLS probes from the London app host timed out on the default, Dublin and Frankfurt Twilio termination addresses. These probes establish no call and do not measure connectivity from the ElevenLabs SIP edge. SIP audio and speed improvements remain unmeasured.
+
+For the first comparison, use the same consenting handset, agent voice and script on both routes. Measure answer to greeting, end of caller speech to first audible reply, and time to yield on an interruption. Compare equivalent scripted turns with and without CRM work separately. Before enabling SIP booking, verify equivalent call-bound identity, recording, current caller authorisation and completed playback evidence, then confirm CRM booking and opt-out behaviour. Use an isolated test profile for audio-only qualification.
+
 ## Direct Plivo SIP: prepared, not activated
 
 The existing owned Plivo number is now registered in ElevenLabs as a SIP number. A new dedicated outbound Plivo trunk uses dedicated digest credentials, secure signaling/media and explicit PCMU/8000 + PCMA/8000 codecs. The trunk is disabled, no agent is assigned to the imported number, the Plivo number's original application is unchanged, and the production application still uses its working recorded India bridge. Nothing was ported or purchased.
