@@ -174,7 +174,7 @@ def interpret(snapshot, *, client=None, redis=None):
     """Short-lived singleflight by exact server context; cache is not action authority."""
     fields, digest = _fields(snapshot), snapshot_digest(snapshot)
     model = settings().managed_interpretation_model
-    cache_key = 'managed:meaning:v12:' + model + ':' + digest
+    cache_key = 'managed:meaning:v13:' + model + ':' + digest
     def unavailable():
         return Understanding(**fields, digest=digest, meaning=None)
     def cached():
@@ -222,12 +222,18 @@ def interpret(snapshot, *, client=None, redis=None):
         data['reference_uk_date'] = now().astimezone(UK).date().isoformat()
         data['extract_readback'] = False
         schema = TurnMeaning.model_json_schema()
-        disposition_check = ('For disposition, inspect the current reply for an actual refusal. If it is positive, '
-            'a question, or still seeks a visit, it is not a refusal. If a refusal does not name its object, '
-            'use the latest agent turn: interrupted_agent_context when present, otherwise completed_agent_speech. '
-            'If that turn proposes a specific date, time, callback, quote or identity check, set disposition=none. '
-            'If it offers to arrange the due service itself and the caller refuses outright, set disposition=not_interested. '
-            'The intended speech is never proof of a readback or authorisation.')
+        disposition_check = (
+            'First check for explicit proxy unavailability. A different current speaker who says the named customer '
+            'cannot come to the phone is disposition=not_available, even if the proxy also asks why you called. '
+            'For example, in a call for Joan, “I’m Claire. Joan can’t come to the phone. What’s this about?” means '
+            'identity=proxy and disposition=not_available. A proxy who only asks why, can get the customer, or is unsure '
+            'of their availability does not establish not_available. For the separate not_interested outcome, look for '
+            'actual refusal of the due service itself. A question, positive reply or continued interest in a visit '
+            'does not establish not_interested. For a short refusal with an unstated object, use interrupted_agent_context '
+            'when present, otherwise completed_agent_speech. If that turn proposes a specific date, time, callback, quote '
+            'or identity check, do not assign not_interested. If it offers to arrange the due service itself and the caller '
+            'refuses outright, set disposition=not_interested. The intended speech is never proof of a readback or authorisation.'
+        )
         payload = {'model': model, 'temperature': 0, 'max_tokens': 450,
                    'messages': [{'role': 'system', 'content': SYSTEM},
                                 {'role': 'system', 'content': disposition_check},
