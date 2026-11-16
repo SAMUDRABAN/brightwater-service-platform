@@ -23,7 +23,16 @@ test("return targets are office paths, never external redirects", () => {
     safeReturnPath("/calls/12345678-1234-1234-1234-123456789012"),
     "/calls/12345678-1234-1234-1234-123456789012",
   );
+  assert.equal(
+    safeReturnPath("/bookings/12345678-1234-1234-1234-123456789012"),
+    "/bookings/12345678-1234-1234-1234-123456789012",
+  );
+  assert.equal(
+    safeReturnPath("/bookings?week=2026-11-23&scope=uk_test"),
+    "/bookings?week=2026-11-23&scope=uk_test",
+  );
   for (const value of [
+    "/bookings?week=2026-11-23&scope=uk_test&next=//evil.test",
     "//evil.test",
     "https://evil.test",
     "/login",

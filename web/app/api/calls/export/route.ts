@@ -1,6 +1,7 @@
 import { currentStaff } from "../../../../lib/staff";
 import { api, type CallList } from "../../../../lib/api";
 import { csvRow } from "../../../../lib/csv";
+import { callScope } from "../../../../lib/office-navigation";
 export async function GET(request: Request) {
   const user = await currentStaff();
   if (!user || user.change_required) return new Response("Sign in required", { status: 401 });
@@ -8,9 +9,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const query = new URLSearchParams({
     page_size: "100",
-    scope: ["campaign", "engineering"].includes(url.searchParams.get("scope") || "")
-      ? url.searchParams.get("scope")!
-      : "all",
+    scope: callScope(url.searchParams.get("scope") || ""),
     q: (url.searchParams.get("q") || "").slice(0, 100),
     outcome: (url.searchParams.get("outcome") || "").slice(0, 50),
   });

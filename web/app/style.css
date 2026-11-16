@@ -944,6 +944,14 @@ main {
   font-weight: 500;
   color: var(--deep);
 }
+.booking-workflow {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 40rem;
+}
+.workflow-form .confirm-cancellation {
+  display: flex;
+  align-items: center;
+}
 input:not([type="hidden"]),
 select,
 textarea {

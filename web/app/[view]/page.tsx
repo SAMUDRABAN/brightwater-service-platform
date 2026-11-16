@@ -12,6 +12,7 @@ import {
   type Followup,
 } from "../../lib/api";
 import { arrivalWindow, bookingTestLabel, gbDate } from "../../lib/format";
+import { callScope, callScopes, followupHref, weekStart } from "../../lib/office-navigation";
 import { pauseCalling, requestCall, requestEngineeringCall, requestUKTestCall } from "../actions";
 import { BookingTable, CallTable, FollowupList } from "../../components/Records";
 import { Empty, ErrorState, PageHeading, PanelHeading, Status } from "../../components/Ui";
@@ -41,8 +42,7 @@ export async function generateMetadata({ params }: { params: Promise<{ view: str
   return { title: titles[view]?.[0] || "Office" };
 }
 const q = (p: Search, k: string) => String(p[k] || "").slice(0, 100);
-const scope = (p: Search) =>
-  ["campaign", "engineering"].includes(q(p, "scope")) ? q(p, "scope") : "all";
+const scope = (p: Search) => callScope(q(p, "scope"));
 function Filters({
   children,
   action,
@@ -81,9 +81,11 @@ function ScopeFilter({ value }: { value: string }) {
     <label className="filter-field">
       <span className="sr-only">Call type</span>
       <select name="scope" defaultValue={value}>
-        <option value="all">All call types</option>
-        <option value="campaign">Customer campaign</option>
-        <option value="engineering">Engineering tests</option>
+        {Object.entries(callScopes).map(([id, label]) => (
+          <option key={id} value={id}>
+            {label}
+          </option>
+        ))}
       </select>
     </label>
   );
@@ -306,10 +308,16 @@ async function Calls({ p }: { p: Search }) {
 }
 async function Followups({ p }: { p: Search }) {
   const status = ["resolved", "all"].includes(q(p, "status")) ? q(p, "status") : "open";
+  const filters = {
+    status,
+    scope: callScope(q(p, "scope"), "campaign"),
+    q: q(p, "q"),
+    owner: q(p, "owner"),
+  };
   const rows = await api<Followup[]>(
-    `/v1/office/followups?${new URLSearchParams({ status, scope: scope(p) })}`,
+    `/v1/office/followups?${new URLSearchParams({ status, scope: filters.scope })}`,
   );
-  const search = q(p, "q").toLocaleLowerCase("en-GB");
+  const search = filters.q.toLocaleLowerCase("en-GB");
   const items = rows.filter(
     (f) =>
       (!q(p, "owner") || f.owner === q(p, "owner")) &&
@@ -319,22 +327,28 @@ async function Followups({ p }: { p: Search }) {
   return (
     <>
       <div className="page-tabs">
-        <Link href="/callbacks" aria-current={status === "open" ? "page" : undefined}>
+        <Link
+          href={followupHref({ ...filters, status: "open" })}
+          aria-current={status === "open" ? "page" : undefined}
+        >
           Open follow-ups
         </Link>
         <Link
-          href="/callbacks?status=resolved"
+          href={followupHref({ ...filters, status: "resolved" })}
           aria-current={status === "resolved" ? "page" : undefined}
         >
           Completed
         </Link>
-        <Link href="/callbacks?status=all" aria-current={status === "all" ? "page" : undefined}>
+        <Link
+          href={followupHref({ ...filters, status: "all" })}
+          aria-current={status === "all" ? "page" : undefined}
+        >
           All follow-ups
         </Link>
       </div>
       <Filters action="/callbacks" placeholder="Search name or follow-up details" value={q(p, "q")}>
         <input type="hidden" name="status" value={status} />
-        <ScopeFilter value={scope(p)} />
+        <ScopeFilter value={filters.scope} />
         <label className="filter-field">
           <span className="sr-only">Assigned to</span>
           <select name="owner" defaultValue={q(p, "owner")}>
@@ -344,7 +358,7 @@ async function Followups({ p }: { p: Search }) {
           </select>
         </label>
       </Filters>
-      <FollowupList items={items} />
+      <FollowupList items={items} filters={filters} />
       <p className="bottom-note">
         Marking a follow-up complete closes the office task. It does not change the call outcome or
         cancel a booking.
@@ -354,8 +368,17 @@ async function Followups({ p }: { p: Search }) {
 }
 async function Diary({ data, p }: { data: Dashboard; p: Search }) {
   const windows = await api<DiaryWindow[]>("/v1/office/diary");
-  const dates = [...new Set(windows.map((w) => w.day))].sort();
-  const start = dates.includes(q(p, "week")) ? q(p, "week") : dates[0];
+  const weekStarts = [...new Set(windows.map((w) => weekStart(w.day)))].sort();
+  const requested = q(p, "week");
+  const requestedWeek =
+    /^\d{4}-\d{2}-\d{2}$/.test(requested) && Number.isFinite(Date.parse(requested))
+      ? weekStart(requested)
+      : "";
+  const selectedScope = scope(p);
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/London" }).format(new Date());
+  const start = weekStarts.includes(requestedWeek)
+    ? requestedWeek
+    : weekStarts.find((week) => week >= weekStart(today)) || weekStarts.at(-1);
   const end = start ? new Date(`${start}T12:00:00Z`) : null;
   if (end) end.setUTCDate(end.getUTCDate() + 7);
   const endDay = end?.toISOString().slice(0, 10) || "";
@@ -369,11 +392,11 @@ async function Diary({ data, p }: { data: Dashboard; p: Search }) {
   );
   const appointments = data.appointments.filter(
     (a) =>
+      (selectedScope === "all" || a.purpose === selectedScope) &&
       (!chosen || a.engineer === chosen) &&
       (!start || a.day >= start) &&
       (!endDay || a.day < endDay),
   );
-  const weekStarts = dates.filter((_, i) => i % 5 === 0);
   const slotCount = Math.max(
     1,
     ...[...new Set(current.map((w) => w.day))].map(
@@ -385,6 +408,7 @@ async function Diary({ data, p }: { data: Dashboard; p: Search }) {
   return (
     <>
       <Filters action="/bookings" search={false}>
+        <ScopeFilter value={selectedScope} />
         <label className="filter-field">
           <span className="sr-only">Week commencing</span>
           <select name="week" defaultValue={start}>
@@ -793,7 +817,7 @@ export default async function View({
     const [title, description] = titles[view];
     let body: React.ReactNode;
     if (view === "morning") {
-      const followups = await api<Followup[]>("/v1/office/followups");
+      const followups = await api<Followup[]>("/v1/office/followups?scope=campaign");
       const m = data.metrics;
       const urgent = followups.filter((f) => f.priority === 0).length;
       const capacity = Math.max(0, data.diary.capacity_minutes - data.diary.used_minutes);

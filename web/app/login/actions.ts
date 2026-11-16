@@ -32,12 +32,13 @@ export async function signIn(form: FormData): Promise<void> {
     path: "/",
     maxAge: SESSION_SECONDS,
   });
+  const target = safeReturnPath(form.get("next"));
   redirect(
     data.user.change_required
       ? "/change-password"
-      : data.user.role === "engineer"
+      : data.user.role === "engineer" && !target.startsWith("/bookings")
         ? "/bookings"
-        : safeReturnPath(form.get("next")),
+        : target,
   );
 }
 export async function signOut(): Promise<void> {

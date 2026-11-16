@@ -16,10 +16,22 @@ const OFFICE_PATHS = new Set([
 ]);
 export function safeReturnPath(value: unknown): string {
   if (typeof value !== "string") return "/morning";
-  return OFFICE_PATHS.has(value) ||
-    /^\/calls\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value)
-    ? value
-    : "/morning";
+  if (
+    OFFICE_PATHS.has(value) ||
+    /^\/(?:calls|bookings)\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      value,
+    )
+  ) {
+    return value;
+  }
+  if (
+    /^\/bookings\?week=\d{4}-\d{2}-\d{2}(?:&scope=(?:all|campaign|uk_test|engineering|browser_simulation))?$/.test(
+      value,
+    )
+  ) {
+    return value;
+  }
+  return "/morning";
 }
 
 export function localOfficeRequest(environment: string | undefined, host: string | null): boolean {

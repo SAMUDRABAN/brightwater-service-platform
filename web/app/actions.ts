@@ -3,6 +3,7 @@
 import { staffToken } from "../lib/staff";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { followupHref } from "../lib/office-navigation";
 
 const messages: Record<string, string> = {
   dialing_disabled: "Calling is disabled in this environment.",
@@ -12,7 +13,11 @@ const messages: Record<string, string> = {
   invalid_destination: "Enter an owned or consented UK number in international format.",
 };
 
-async function post(path: string, payload: unknown): Promise<string | null> {
+async function post(
+  path: string,
+  payload: unknown,
+  officeWorkflow = false,
+): Promise<string | null> {
   const token = await staffToken();
   if (!token) return "The office connection is not configured.";
   try {
@@ -27,12 +32,13 @@ async function post(path: string, payload: unknown): Promise<string | null> {
     const body = await response.json();
     return (
       messages[body.error] ||
+      (officeWorkflow && typeof body.message === "string" ? body.message : null) ||
       "The request was not accepted. Check the record and calling policy before trying again."
     );
   } catch {
     // A timed-out call request may already be queued. Retain the original
     // request key and inspect existing intent rather than claim it failed.
-    return "The result could not be confirmed. Check the call record before submitting another request.";
+    return "The result could not be confirmed. Check the record before submitting another request.";
   }
 }
 
@@ -140,21 +146,68 @@ export async function requestUKTestCall(form: FormData) {
 }
 
 export async function updateFollowup(form: FormData) {
+  const filters = {
+    status: value(form, "view_status"),
+    scope: value(form, "view_scope"),
+    owner: value(form, "view_owner"),
+    q: value(form, "view_q"),
+  };
   const id = value(form, "followup_id");
-  if (!/^[a-f0-9-]{36}$/.test(id)) redirect("/callbacks?notice=Invalid%20follow-up");
+  if (!/^[a-f0-9-]{36}$/.test(id))
+    redirect(followupHref({ ...filters, notice: "Invalid follow-up" }));
   const action = value(form, "action");
-  const error = await post(`/v1/office/followups/${id}`, {
-    action,
-    owner: value(form, "owner") || null,
-    note: value(form, "note"),
-    request_key: value(form, "request_key"),
-  });
+  const error = await post(
+    `/v1/office/followups/${id}`,
+    {
+      action,
+      owner: value(form, "owner") || null,
+      note: value(form, "note"),
+      request_key: value(form, "request_key"),
+    },
+    true,
+  );
   revalidatePath("/morning");
   revalidatePath("/callbacks");
   revalidatePath(`/calls/${value(form, "call_id")}`);
-  redirect(
-    `/callbacks?status=${action === "resolve" ? "resolved" : "open"}&notice=${encodeURIComponent(error || (action === "resolve" ? "Follow-up marked complete." : action === "assign" ? "Follow-up owner updated." : "Follow-up reopened."))}`,
+  const notice =
+    error ||
+    (action === "resolve"
+      ? "Follow-up marked complete."
+      : action === "assign"
+        ? "Follow-up owner updated."
+        : "Follow-up reopened.");
+  redirect(followupHref({ ...filters, notice }));
+}
+
+export async function updateBooking(form: FormData) {
+  const id = value(form, "booking_id");
+  if (!/^[a-f0-9-]{36}$/.test(id)) redirect("/bookings");
+  const action = value(form, "action");
+  if (!value(form, "note") || (action === "cancel" && value(form, "confirm_cancel") !== "on")) {
+    redirect(
+      `/bookings/${id}?notice=${encodeURIComponent("Enter a reason and confirm the requested change.")}`,
+    );
+  }
+  const error = await post(
+    `/v1/office/bookings/${id}`,
+    {
+      action,
+      note: value(form, "note"),
+      request_key: value(form, "request_key"),
+      revision: value(form, "revision"),
+      item_id: value(form, "item_id") || null,
+      window_id: value(form, "window_id") || null,
+    },
+    true,
   );
+  revalidatePath("/bookings");
+  revalidatePath(`/bookings/${id}`);
+  revalidatePath("/morning");
+  revalidatePath("/calls", "layout");
+  const notice =
+    error ||
+    (action === "cancel" ? "Booking cancelled. Its capacity is available." : "Visit rescheduled.");
+  redirect(`/bookings/${id}?notice=${encodeURIComponent(notice)}`);
 }
 export async function updatePreferences(form: FormData) {
   const id = value(form, "customer_id");

@@ -331,6 +331,49 @@ def commit(db, call_id, proposal_id, confirmation_event_id, *, consent=None):
     return reserve(db, call, proposal)
 
 
+def lock_diary_windows(db, ids):
+    return {w.id: w for w in db.scalars(select(m.DiaryWindow).where(
+        m.DiaryWindow.id.in_(ids)).order_by(m.DiaryWindow.id).with_for_update()
+        .execution_options(populate_existing=True))}
+
+
+def apply_diary_capacity(windows, changes):
+    for window_id, minutes in changes.items():
+        window = windows.get(window_id)
+        if not window or window.used_minutes + minutes < 0:
+            raise Rejected("diary_inconsistent", "The office needs to review this diary entry; no changes were made")
+        if window.used_minutes + minutes > window.capacity_minutes:
+            raise Rejected("capacity_conflict", "That space has just been booked; check the diary again")
+    for window_id, minutes in changes.items():
+        windows[window_id].used_minutes += minutes
+
+
+def lock_booking_properties(db, ids):
+    return {p.id: p for p in db.scalars(select(m.Property).where(m.Property.id.in_(ids))
+        .order_by(m.Property.id).with_for_update())}
+
+
+def service_covers(booked, due):
+    return booked == due or (booked == "combined" and due in SERVICES)
+
+
+def release_booking(db, booking, items):
+    """Release capacity and reopen reminders without altering the original call."""
+    lock_booking_properties(db, {item.property_id for item in items})
+    demand = Counter()
+    for item in items:
+        demand[item.window_id] -= item.duration_minutes
+    apply_diary_capacity(lock_diary_windows(db, demand.keys()), demand)
+    booking.state = "cancelled"
+    db.flush()
+    for item in items:
+        other_services = db.scalars(select(m.BookingItem.service).join(m.Booking)
+            .where(m.BookingItem.property_id == item.property_id, m.Booking.state == "confirmed")).all()
+        for due in db.scalars(select(m.Obligation).where(m.Obligation.property_id == item.property_id)):
+            if service_covers(item.service, due.service) and not any(service_covers(service, due.service) for service in other_services):
+                due.resolved = False
+
+
 def reserve(db, call, proposal):
     """Reserve after a trusted adapter has validated its confirmation evidence.
 
@@ -349,12 +392,11 @@ def reserve(db, call, proposal):
         m.CallEvent.kind == 'semantic_turn')).all()
     if any(e.payload.get('followup') in {'gas_emergency', 'co_alarm', 'urgent'} for e in hazards):
         raise Rejected('unsafe_service_booking', 'Urgent or emergency issues need human follow-up')
-    ids = sorted({i["window_id"] for i in proposal.items})
-    windows = {w.id: w for w in db.scalars(select(m.DiaryWindow).where(
-        m.DiaryWindow.id.in_(ids)).order_by(m.DiaryWindow.id).with_for_update())}
+    properties = lock_booking_properties(db, {i["property_id"] for i in proposal.items})
+    windows = lock_diary_windows(db, {i["window_id"] for i in proposal.items})
     demand = Counter()
     for item in proposal.items:
-        prop = db.get(m.Property, item["property_id"])
+        prop = properties.get(item["property_id"])
         window = windows.get(item["window_id"])
         engineer = db.get(m.Engineer, window.engineer_id) if window else None
         if not prop or prop.customer_id != call.customer_id or not engineer or not engineer.gas_registered or not engineer.active:
@@ -363,8 +405,7 @@ def reserve(db, call, proposal):
             or window.period != item["period"]):
             raise Rejected("engineer_changed", "The offered date, window or engineer assignment changed. Review this selection and obtain fresh agreement before saving")
         demand[window.id] += SERVICES[item["service"]]["minutes"]
-    if any(windows[k].used_minutes + minutes > windows[k].capacity_minutes for k, minutes in demand.items()):
-        raise Rejected("capacity_conflict", "That space has just been booked; check the diary again")
+    apply_diary_capacity(windows, demand)
     booking = m.Booking(proposal_id=proposal.id, call_id=call.id, customer_id=call.customer_id,
                         total_pence=proposal.total_pence)
     db.add(booking)
@@ -374,10 +415,8 @@ def reserve(db, call, proposal):
                             window_id=item["window_id"], service=item["service"], duration_minutes=item["minutes"],
                             price_pence=item["price_pence"], tenant_name=item["tenant_name"], tenant_phone=item["tenant_phone"]))
         for obligation in db.scalars(select(m.Obligation).where(m.Obligation.property_id == item["property_id"])):
-            if obligation.service == item["service"] or item["service"] == "combined":
+            if service_covers(item["service"], obligation.service):
                 obligation.resolved = True
-    for key, minutes in demand.items():
-        windows[key].used_minutes += minutes
     proposal.state = "committed"
     stop_campaign(db, call)
     return booking

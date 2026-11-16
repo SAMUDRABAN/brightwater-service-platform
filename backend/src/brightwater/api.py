@@ -21,6 +21,7 @@ from brightwater.config import settings
 from brightwater.db import get_db, session
 from brightwater.knowledge import lookup
 from brightwater.media import MAX_RECORDING_BYTES, read_recording, store_recording
+from brightwater.office import displayed_purpose
 from brightwater.policy import CO_ADVICE, GAS_ADVICE, SERVICES, UK, Rejected, now
 
 app = FastAPI(title="Brightwater control plane", version=version("brightwater"), docs_url=None, redoc_url=None, openapi_url=None)
@@ -282,7 +283,7 @@ def call_detail(call_id: str, db: DB):
     value = db.get(m.Call, call_id)
     if not value:
         raise Rejected("not_found", "Call not found", 404)
-    return {**row(value, {"session_token_hash"}), "purpose": "uk_test" if value.time_band == "uk_test" else value.purpose,
+    return {**row(value, {"session_token_hash"}), "purpose": displayed_purpose(value),
             "customer_name": svc.customer(db, value.customer_id).name,
             "events": [row(e) for e in db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call_id).order_by(m.CallEvent.occurred_at))],
             "bookings": [row(b) for b in db.scalars(select(m.Booking).where(m.Booking.call_id == call_id))],
@@ -307,7 +308,7 @@ def dashboard(request: Request, db: DB):
     for follow in db.scalars(select(m.Followup).where(m.Followup.resolved.is_(False)).order_by(m.Followup.priority, m.Followup.created_at)):
         call = db.get(m.Call, follow.call_id)
         followups.append({**row(follow), "customer_name": svc.customer(db, call.customer_id).name,
-                          "summary": call.summary, "media_state": call.media_state, "purpose": call.purpose, "customer_id": call.customer_id})
+                          "summary": call.summary, "media_state": call.media_state, "purpose": displayed_purpose(call), "customer_id": call.customer_id})
     viewer = getattr(request.state, "staff", None)
     engineer_id = viewer.engineer_id if viewer and viewer.role == "engineer" else None
     appointments = []
@@ -320,7 +321,7 @@ def dashboard(request: Request, db: DB):
             continue
         appointments.append({"booking_id": booking.id, "created_yesterday": booking.created_at.astimezone(UK).date() == today - timedelta(days=1),
                              "day": window.day, "period": window.period, "engineer": engineer.name,
-                             "address": prop.address, "service": item.service, "state": booking.state, "call_id": booking.call_id, "customer_id": booking.customer_id, "customer_name": svc.customer(db, booking.customer_id).name, "price_pence": item.price_pence, "purpose": db.get(m.Call, booking.call_id).purpose})
+                             "address": prop.address, "service": item.service, "state": booking.state, "call_id": booking.call_id, "customer_id": booking.customer_id, "customer_name": svc.customer(db, booking.customer_id).name, "price_pence": item.price_pence, "purpose": displayed_purpose(db.get(m.Call, booking.call_id))})
     capacity = db.execute(select(func.sum(m.DiaryWindow.capacity_minutes), func.sum(m.DiaryWindow.used_minutes))).one()
     if viewer and viewer.role == "engineer":
         return {"appointments": appointments, "viewer": staff.public(viewer)}

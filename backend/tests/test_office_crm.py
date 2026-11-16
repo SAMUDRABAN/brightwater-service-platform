@@ -336,3 +336,99 @@ def test_staff_can_resolve_unclassified_phone_outcome_with_evidence(staff):
         assert len(notes) == 1 and notes[0].payload["actor"] == "sarah"
         followups = {f.kind: f.resolved for f in db.scalars(select(m.Followup).where(m.Followup.call_id == call_id))}
         assert followups == {"internal_review": True, "wrong_number": False}
+
+
+def test_office_call_scopes_keep_uk_and_browser_tests_out_of_campaign():
+    scopes = ("campaign", "uk_test", "engineering", "browser_simulation")
+    with session() as db, db.begin():
+        for customer, scope in zip(("BW-1041", "BW-1072", "BW-1056", "BW-1107"), scopes, strict=True):
+            call, _ = make_call(db, customer)
+            call.state = "finished"
+            if scope == "uk_test":
+                call.time_band = scope
+            else:
+                call.purpose = scope
+            db.add(m.Followup(call_id=call.id, kind="callback", owner="Sarah", priority=1, detail="Review"))
+    for scope in scopes:
+        calls = client.get(f"/v1/office/calls?scope={scope}", headers=operator()).json()["items"]
+        followups = client.get(f"/v1/office/followups?scope={scope}", headers=operator()).json()
+        assert [c["purpose"] for c in calls] == [scope]
+        assert [f["purpose"] for f in followups] == [scope]
+        assert calls[0]["id"] == followups[0]["call_id"]
+
+
+def test_office_reschedule_and_cancel_preserve_call_and_apply_capacity_once(staff, monkeypatch):
+    from datetime import UTC, datetime
+
+    from test_bookings import confirmation, prepare_offer
+
+    from brightwater import office, office_bookings
+    from brightwater import services as svc
+
+    reference = datetime(2026, 11, 15, 12, tzinfo=UTC)
+    monkeypatch.setattr(office, "now", lambda: reference)
+    monkeypatch.setattr(office_bookings, "now", lambda: reference)
+    with session() as db, db.begin():
+        call, _ = make_call(db)
+        old, new, full = db.scalars(select(m.DiaryWindow)
+            .where(m.DiaryWindow.engineer_id == "priya", m.DiaryWindow.used_minutes == 0)
+            .order_by(m.DiaryWindow.day).limit(3)).all()
+        proposal = prepare_offer(db, call, ["BW-1041-P1"], old.id)
+        booking = svc.commit(db, call.id, proposal.id, confirmation(db, call, proposal))
+        call.state, call.outcome, call.time_band = "finished", "Booked", "uk_test"
+        old_id, target, booking_id, call_id = old.id, new.id, booking.id, call.id
+        ineligible = db.scalar(select(m.DiaryWindow.id).where(m.DiaryWindow.engineer_id == "tom").limit(1))
+        full.used_minutes = full.capacity_minutes
+        full_id = full.id
+    auth = headers("sarah")
+    path = f"/v1/office/bookings/{booking_id}"
+    before = client.get(path, headers=auth).json()
+    assert before["purpose"] == "uk_test" and before["can_cancel"]
+    appointment = client.get("/v1/dashboard", headers=auth).json()["appointments"][0]
+    assert appointment["purpose"] == "uk_test"
+    item = before["items"][0]
+    assert target in {option["id"] for option in item["rescheduling_options"]}
+    move = {"action": "reschedule", "request_key": m.uid(), "revision": before["revision"],
+            "item_id": item["id"], "window_id": target, "note": "Customer agreed to a new window"}
+    assert client.post(path, headers=headers("priya"), json=move).status_code == 403
+    assert client.post(path, headers=auth, json=move | {"window_id": ineligible}).status_code == 422
+    blocked = client.post(path, headers=auth, json=move | {"window_id": full_id})
+    assert blocked.status_code == 409 and blocked.json()["error"] == "capacity_conflict"
+    for _ in range(2):
+        result = client.post(path, headers=auth, json=move)
+        assert result.status_code == 200 and result.json()["state"] == "confirmed"
+    moved = client.get(path, headers=auth).json()
+    assert moved["revision"] != before["revision"] and moved["items"][0]["price_pence"] == 9500
+    assert len(moved["history"]) == 1 and moved["history"][0]["actor"] == "sarah"
+    with session() as db:
+        assert db.get(m.DiaryWindow, old_id).used_minutes == 0
+        assert db.get(m.DiaryWindow, target).used_minutes == 60
+        assert db.scalar(select(m.BookingItem).where(m.BookingItem.booking_id == booking_id)).window_id == target
+
+    cancel = {"action": "cancel", "request_key": m.uid(), "revision": before["revision"],
+              "note": "Customer cancelled the visit"}
+    assert client.post(path, headers=auth, json=cancel).json()["error"] == "booking_changed"
+    cancel["revision"] = moved["revision"]
+    for _ in range(2):
+        result = client.post(path, headers=auth, json=cancel)
+        assert result.status_code == 200 and result.json()["state"] == "cancelled"
+    after = client.get(path, headers=auth).json()
+    assert not after["can_cancel"] and len(after["history"]) == 2
+    assert client.get("/v1/dashboard", headers=auth).json()["appointments"] == []
+    with session() as db:
+        assert db.get(m.DiaryWindow, target).used_minutes == 0
+        assert db.get(m.Call, call_id).outcome == "Booked"
+        due = db.scalar(select(m.Obligation).where(m.Obligation.property_id == "BW-1041-P1"))
+        assert not due.resolved
+
+
+def test_diary_lock_refreshes_previously_read_capacity():
+    from brightwater import services as svc
+
+    with session() as db, db.begin():
+        window = db.scalar(select(m.DiaryWindow).where(m.DiaryWindow.used_minutes == 0).limit(1))
+        with session() as other, other.begin():
+            other.get(m.DiaryWindow, window.id).used_minutes = 60
+        locked = svc.lock_diary_windows(db, {window.id})
+        assert locked[window.id] is window
+        assert window.used_minutes == 60

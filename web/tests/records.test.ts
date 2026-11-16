@@ -1,3 +1,4 @@
+import { callScope, diaryHref, followupHref, weekStart } from "../lib/office-navigation.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { csvCell, csvRow } from "../lib/csv.ts";
@@ -43,4 +44,35 @@ test("Diary distinguishes UK roleplays stored under the campaign purpose", () =>
   assert.equal(bookingTestLabel("campaign", "BW-1107"), null);
   assert.equal(bookingTestLabel("browser_simulation", "EXAMPLE"), "Browser test");
   assert.equal(bookingTestLabel("engineering", "EXAMPLE"), "Engineering test");
+});
+
+test("call scopes and follow-up navigation retain the selected customer view", () => {
+  assert.equal(callScope("uk_test"), "uk_test");
+  assert.equal(callScope("browser_simulation"), "browser_simulation");
+  assert.equal(callScope("unknown", "campaign"), "campaign");
+  const url = new URL(
+    followupHref({
+      status: "resolved",
+      scope: "uk_test",
+      owner: "Sarah",
+      q: "Graham",
+      notice: "Saved",
+    }),
+    "https://office.test",
+  );
+  assert.equal(url.pathname, "/callbacks");
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    status: "resolved",
+    scope: "uk_test",
+    owner: "Sarah",
+    q: "Graham",
+    notice: "Saved",
+  });
+});
+
+test("diary links use the Monday of the visit's real calendar week", () => {
+  assert.equal(weekStart("2026-11-18"), "2026-11-16");
+  assert.equal(weekStart("2027-01-01"), "2026-12-28");
+  assert.equal(weekStart("2026-11-22"), "2026-11-16");
+  assert.equal(diaryHref("2026-11-24", "uk_test"), "/bookings?week=2026-11-23&scope=uk_test");
 });

@@ -15,7 +15,15 @@ import {
 import { updateFollowup } from "../app/actions";
 import { Icon } from "./Icon";
 import { Empty, PanelHeading, Status } from "./Ui";
-export function FollowupList({ items, compact = false }: { items: Followup[]; compact?: boolean }) {
+export function FollowupList({
+  items,
+  compact = false,
+  filters,
+}: {
+  items: Followup[];
+  compact?: boolean;
+  filters?: { status: string; scope: string; owner: string; q: string };
+}) {
   return (
     <section className="panel">
       <PanelHeading
@@ -58,11 +66,8 @@ export function FollowupList({ items, compact = false }: { items: Followup[]; co
                   >
                     {followupName(f.kind)}
                   </Status>
-                  {f.purpose === "browser_simulation" && (
-                    <span className="test-label">Browser test</span>
-                  )}
-                  {f.purpose === "engineering" && (
-                    <span className="test-label">Engineering test</span>
+                  {bookingTestLabel(f.purpose, f.customer_id) && (
+                    <span className="test-label">{bookingTestLabel(f.purpose, f.customer_id)}</span>
                   )}
                 </div>
                 <h3>
@@ -89,6 +94,9 @@ export function FollowupList({ items, compact = false }: { items: Followup[]; co
                       <input type="hidden" name="followup_id" value={f.id} />
                       <input type="hidden" name="call_id" value={f.call_id} />
                       <input type="hidden" name="request_key" value={randomUUID()} />
+                      {Object.entries(filters || {}).map(([key, value]) => (
+                        <input key={key} type="hidden" name={`view_${key}`} value={value} />
+                      ))}
                       <label>
                         Assigned to
                         <select name="owner" defaultValue={f.owner}>
@@ -257,12 +265,8 @@ export function CallTable({ items }: { items: CallRecord[] }) {
                 <small>
                   {c.customer_id} · Attempt {c.attempt}
                 </small>
-                {c.purpose === "browser_simulation" && (
-                  <span className="test-label">Browser test</span>
-                )}
-                {c.purpose === "uk_test" && <span className="test-label">UK test</span>}
-                {c.purpose === "engineering" && (
-                  <span className="test-label">Engineering test</span>
+                {bookingTestLabel(c.purpose, c.customer_id) && (
+                  <span className="test-label">{bookingTestLabel(c.purpose, c.customer_id)}</span>
                 )}
               </td>
               <td>

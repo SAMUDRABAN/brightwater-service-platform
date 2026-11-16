@@ -4,8 +4,9 @@ import { redirect, notFound } from "next/navigation";
 import { requireStaff } from "../../../lib/staff";
 import { reviewCallOutcome } from "../../actions";
 import { api } from "../../../lib/api";
-import { duration, gbDate, gbTime, money } from "../../../lib/format";
+import { bookingTestLabel, duration, gbDate, gbTime, money } from "../../../lib/format";
 import { Icon } from "../../../components/Icon";
+import { diaryHref } from "../../../lib/office-navigation";
 import { Empty, ErrorState, PageHeading, PanelHeading, Status } from "../../../components/Ui";
 export const dynamic = "force-dynamic";
 type Detail = {
@@ -101,8 +102,8 @@ export default async function CallPage({
       {notice && <p role="status">{notice}</p>}
       <section className="panel">
         <PanelHeading title="Call summary">
-          {call.purpose === "engineering" && (
-            <span className="test-label">Engineering roleplay</span>
+          {bookingTestLabel(call.purpose, call.customer_id) && (
+            <span className="test-label">{bookingTestLabel(call.purpose, call.customer_id)}</span>
           )}
         </PanelHeading>
         <div className="panel-body">
@@ -227,6 +228,12 @@ export default async function CallPage({
                   <dd>
                     {gbDate(item.day + "T12:00:00Z")} ·{" "}
                     {item.period === "MORNING" ? "08:00–12:00" : "12:00–17:00"}
+                    {call.arrangement.saved && (
+                      <>
+                        {" "}
+                        · <Link href={diaryHref(item.day, call.purpose)}>View diary</Link>
+                      </>
+                    )}
                   </dd>
                 </div>
                 <div>
@@ -265,7 +272,7 @@ export default async function CallPage({
                 <Status tone={b.state === "confirmed" ? "success" : "neutral"}>{b.state}</Status>
                 <strong>{money(b.total_pence)} including VAT</strong>
                 <Link href={`/bookings/${b.id}`} className="text-link">
-                  View diary
+                  Open booking
                   <Icon name="arrow" size={14} />
                 </Link>
               </div>

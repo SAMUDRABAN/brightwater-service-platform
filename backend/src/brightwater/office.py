@@ -5,12 +5,13 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from brightwater import models as m
 from brightwater.db import get_db
-from brightwater.policy import Rejected, now
+from brightwater.office_bookings import BookingUpdate
+from brightwater.policy import UK, Rejected, now
 
 DB = Annotated[Session, Depends(get_db, scope="function")]
 
@@ -34,6 +35,17 @@ class Preferences(BaseModel):
     not_before: time | None = None
 
 
+CallScope = Literal["all", "campaign", "uk_test", "engineering", "browser_simulation"]
+
+
+def call_type():
+    return case((m.Call.time_band == "uk_test", "uk_test"), else_=m.Call.purpose)
+
+
+def displayed_purpose(call):
+    return "uk_test" if call.time_band == "uk_test" else call.purpose
+
+
 def followup_row(db, value):
     call = db.get(m.Call, value.call_id)
     person = db.get(m.Customer, call.customer_id)
@@ -49,7 +61,7 @@ def followup_row(db, value):
         "summary": call.summary,
         "media_state": call.media_state,
         "created_at": value.created_at,
-        "purpose": call.purpose,
+        "purpose": displayed_purpose(call),
         "resolved": value.resolved,
     }
 
@@ -59,7 +71,7 @@ def call_row(call, name):
         "id": call.id,
         "customer_id": call.customer_id,
         "customer_name": name,
-        "purpose": "uk_test" if call.time_band == "uk_test" else call.purpose,
+        "purpose": displayed_purpose(call),
         "state": call.state,
         "outcome": call.outcome,
         "summary": call.summary,
@@ -77,13 +89,13 @@ def install(app, operator):
     def followups(
         db: DB,
         status: Literal["open", "resolved", "all"] = "open",
-        scope: Literal["all", "campaign", "engineering"] = "all",
+        scope: CallScope = "all",
     ):
         query = select(m.Followup).join(m.Call, m.Call.id == m.Followup.call_id)
         if status != "all":
             query = query.where(m.Followup.resolved.is_(status == "resolved"))
         if scope != "all":
-            query = query.where(m.Call.purpose == scope)
+            query = query.where(call_type() == scope)
         return [
             followup_row(db, f)
             for f in db.scalars(query.order_by(m.Followup.priority, m.Followup.created_at))
@@ -235,14 +247,14 @@ def install(app, operator):
         q: str = Query(default="", max_length=100),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=25, ge=1, le=100),
-        scope: Literal["all", "campaign", "engineering"] = "all",
+        scope: CallScope = "all",
         outcome: str = Query(default="", max_length=50),
     ):
         query = select(m.Call, m.Customer.name).join(
             m.Customer, m.Customer.id == m.Call.customer_id
         )
         if scope != "all":
-            query = query.where(m.Call.purpose == scope)
+            query = query.where(call_type() == scope)
         if q.strip():
             # Escape wildcard characters: the search box searches literal text.
             term = (
@@ -330,6 +342,13 @@ def install(app, operator):
             for w, e in windows
         ]
 
+    @app.post("/v1/office/bookings/{booking_id}", dependencies=auth)
+    def update_booking(booking_id: str, body: BookingUpdate, request: Request, db: DB):
+        from brightwater.office_bookings import update
+
+        actor = getattr(request.state, "staff", None)
+        return update(db, booking_id, body, actor.username if actor else "trusted_operator")
+
     @app.get("/v1/office/bookings/{booking_id}", dependencies=auth)
     def booking(booking_id: str, request: Request, db: DB):
         viewer = getattr(request.state, "staff", None)
@@ -347,15 +366,37 @@ def install(app, operator):
         rows = list(db.execute(query.order_by(m.DiaryWindow.day, m.Property.address)))
         if not rows:
             raise Rejected("not_found", "Booking not found", 404)
+        from brightwater.office_bookings import options, revision
+        from brightwater.services import ACTIVE
+
         first = rows[0][0]
+        call = db.get(m.Call, first.call_id)
+        today = now().astimezone(UK).date()
+        items = [row[1] for row in rows]
+        editable = (not viewer or viewer.role != "engineer") and first.state == "confirmed" and call.state not in ACTIVE
+        can_cancel = editable and all(row[2].day >= today for row in rows)
+        available = options(db, [row[1] for row in rows if row[2].day >= today], today) if editable else {}
+        viewer_is_engineer = viewer and viewer.role == "engineer"
+        history = [] if viewer_is_engineer else [
+            {"action": e.payload["action"], "note": e.payload["note"], "actor": e.payload["actor"], "at": e.occurred_at}
+            for e in db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id,
+                m.CallEvent.kind == "office_booking_updated").order_by(m.CallEvent.occurred_at.desc()))
+            if e.payload.get("booking_id") == first.id
+        ]
         return {
             "id": first.id,
             "state": first.state,
+            "purpose": displayed_purpose(call),
+            "revision": revision(db, first, items) if editable else None,
+            "can_cancel": can_cancel,
+            "history": history,
             "customer_name": rows[0][5].name,
             "customer_id": first.customer_id,
             "call_id": None if viewer and viewer.role == "engineer" else first.call_id,
             "items": [
                 {
+                    "id": item.id,
+                    "rescheduling_options": available.get(item.id, []),
                     "address": prop.address,
                     "boiler": prop.boiler,
                     "service": item.service,
