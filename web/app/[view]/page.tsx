@@ -11,7 +11,7 @@ import {
   type DiaryWindow,
   type Followup,
 } from "../../lib/api";
-import { arrivalWindow, gbDate } from "../../lib/format";
+import { arrivalWindow, bookingTestLabel, gbDate } from "../../lib/format";
 import { pauseCalling, requestCall, requestEngineeringCall, requestUKTestCall } from "../actions";
 import { BookingTable, CallTable, FollowupList } from "../../components/Records";
 import { Empty, ErrorState, PageHeading, PanelHeading, Status } from "../../components/Ui";
@@ -483,6 +483,12 @@ async function Diary({ data, p }: { data: Dashboard; p: Search }) {
                                   ? "Combined visit"
                                   : "Boiler service"}
                             </small>
+                            <small>{a.address}</small>
+                            {bookingTestLabel(a.purpose, a.customer_id) && (
+                              <span className="test-label">
+                                {bookingTestLabel(a.purpose, a.customer_id)}
+                              </span>
+                            )}
                           </Link>
                         ))}
                     </div>

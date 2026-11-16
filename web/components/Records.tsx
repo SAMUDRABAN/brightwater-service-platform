@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Appointment, CallRecord, Followup } from "../lib/api";
 import {
   arrivalWindow,
+  bookingTestLabel,
   duration,
   followupName,
   gbDate,
@@ -180,11 +181,10 @@ export function BookingTable({
                   <td>
                     <strong>{a.customer_name || a.address}</strong>
                     <small>{a.address}</small>
-                    {a.purpose === "browser_simulation" && (
-                      <span className="test-label">Browser test</span>
-                    )}
-                    {a.purpose === "engineering" && (
-                      <span className="test-label">Engineering test</span>
+                    {bookingTestLabel(a.purpose, a.customer_id) && (
+                      <span className="test-label">
+                        {bookingTestLabel(a.purpose, a.customer_id)}
+                      </span>
                     )}
                   </td>
                   <td>

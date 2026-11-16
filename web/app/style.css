@@ -1247,6 +1247,9 @@ td .status-badge {
   margin: 3px 0 0;
   font-weight: 400;
 }
+.diary-appointment .test-label {
+  margin-top: 4px;
+}
 .detail-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;

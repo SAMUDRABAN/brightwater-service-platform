@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { csvCell, csvRow } from "../lib/csv.ts";
-import { arrivalWindow, duration, gbDate, gbTime, isEmergency, money } from "../lib/format.ts";
+import {
+  arrivalWindow,
+  bookingTestLabel,
+  duration,
+  gbDate,
+  gbTime,
+  isEmergency,
+  money,
+} from "../lib/format.ts";
 test("CSV quotes caller content and preserves multiline cells", () => {
   assert.equal(
     csvRow(["A, B", 'he said "yes"', "line one\nline two"]),
@@ -28,4 +36,11 @@ test("Arrival windows and emergency display use business meanings", () => {
   assert.ok(!isEmergency("complaint"));
   assert.equal(duration(125), "2m 05s");
   assert.equal(duration(null), "Not connected");
+});
+
+test("Diary distinguishes UK roleplays stored under the campaign purpose", () => {
+  assert.equal(bookingTestLabel("campaign", "ENGINEERING-UK-BW-1107-example"), "UK test");
+  assert.equal(bookingTestLabel("campaign", "BW-1107"), null);
+  assert.equal(bookingTestLabel("browser_simulation", "EXAMPLE"), "Browser test");
+  assert.equal(bookingTestLabel("engineering", "EXAMPLE"), "Engineering test");
 });

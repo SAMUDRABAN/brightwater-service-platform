@@ -46,3 +46,10 @@ export const duration = (seconds: number | null) => {
 };
 export const arrivalWindow = (period: string) =>
   period === "MORNING" ? "08:00–12:00" : "12:00–17:00";
+export function bookingTestLabel(purpose: string, customerId: string) {
+  if (purpose === "uk_test" || (purpose === "campaign" && customerId.startsWith("ENGINEERING-UK-")))
+    return "UK test";
+  if (purpose === "browser_simulation") return "Browser test";
+  if (purpose === "engineering") return "Engineering test";
+  return null;
+}
