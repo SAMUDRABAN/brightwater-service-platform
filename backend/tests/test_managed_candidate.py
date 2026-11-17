@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 import pytest
 from semantic_fixture import bind
 from sqlalchemy import func, select
@@ -132,18 +134,23 @@ def test_account_and_availability_remain_private_before_identity():
 
 
 @pytest.mark.parametrize("replacement", [
-    ("£95", "£195"), ("16th November", "17th November"),
+    ("£95", "£195"), "visit date",
     ("eight until twelve", "nine until eleven"), ("2026", "2027"),
     ("18 Albert Road", "19 Albert Road"), ("PO4 0JT", "PO4 1JT"),
     ("boiler service", "gas safety check"),
 ])
 def test_spoken_format_flexibility_does_not_accept_wrong_booking_details(replacement):
-    from brightwater.managed.readback import complete_readback
+    from brightwater.managed.readback import complete_readback, ordinal
     with session() as db, db.begin():
         _, conv = start(db)
         prepared = proposal(db, conv)
         row = db.get(m.Proposal, prepared["proposal_id"])
         assert complete_readback(prepared["readback"], row)
+        if replacement == "visit date":
+            day = date.fromisoformat(row.items[0]["day"])
+            different = day + timedelta(days=1)
+            replacement = (f"{ordinal(day.day)} {day:%B}", f"{ordinal(different.day)} {different:%B}")
+        assert replacement[0] in prepared["readback"]
         assert not complete_readback(prepared["readback"].replace(*replacement), row)
 
 

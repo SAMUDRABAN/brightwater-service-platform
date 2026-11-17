@@ -1,6 +1,6 @@
 import json
 from dataclasses import replace
-from datetime import timedelta
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -174,7 +174,8 @@ def test_natural_readback_extracts_facts_but_cannot_rewrite_the_proposal(failure
     with session() as db, db.begin():
         call, conv, prepared = phone(db)
         proposal = db.get(m.Proposal, prepared['proposal_id'])
-        text = ('At 18 Albert Road, Southsea, PO4 0JT, the boiler service would be on 16 November 2026, '
+        day = date.fromisoformat(proposal.items[0]['day'])
+        text = (f'At 18 Albert Road, Southsea, PO4 0JT, the boiler service would be on {day:%d %B %Y}, '
                 'arriving between 8am and noon. You would pay the engineer £95 altogether, VAT already included. '
                 'Would you like me to reserve that visit?')
         event(db, call, 'agent_utterance', now() - timedelta(seconds=2), source='plivo_elevenlabs_observer',
@@ -184,7 +185,7 @@ def test_natural_readback_extracts_facts_but_cannot_rewrite_the_proposal(failure
         conv.agent(text)
         conv.user('Go ahead')
         facts = SpokenFacts(unambiguous=True, items=[SpokenItem(address='18 Albert Road, Southsea', postcode='PO4 0JT',
-            service='service', day='2026-11-16', period='MORNING', window_start=8, window_end=12,
+            service='service', day=day.isoformat(), period='MORNING', window_start=8, window_end=12,
             quote=text.split(' You would')[0])], total_pence=9500, vat_included=True, payment_to_engineer=True,
             asks_confirmation=True, price_quote='£95 altogether', vat_quote='VAT already included',
             payment_quote='pay the engineer', question_quote='Would you like me to reserve that visit?')
