@@ -39,7 +39,8 @@ class Response:
 
 class SpeechClock:
     """Retain original packet receive time across buffered/VAD processing."""
-    def __init__(self):
+    def __init__(self, *, match_recent_speech=False):
+        self.match_recent_speech = match_recent_speech
         self.frames = deque(maxlen=512)
         self.samples = 0
         self.starts = deque(maxlen=32)
@@ -48,7 +49,7 @@ class SpeechClock:
         self.opening_boundary = None
         self.preopening_discarded = 0
         self.seen_transcripts = set()
-        self.turn_start = None
+        self.turn_start = self.turn_last_audio = None
         self.response_event_floor = -1
 
     def frame(self, frame):
@@ -100,12 +101,14 @@ class SpeechClock:
         self.starts.clear()
         self.starts.extend(retained)
 
-    def transcript(self, event_id):
+    def transcript(self, event_id, *, received_at=None):
         if event_id in self.seen_transcripts:
             return None
         self.seen_transcripts.add(event_id)
         if type(event_id) is not int or event_id <= self.response_event_floor:
             return None
+        if self.match_recent_speech:
+            return self._match_recent_speech(received_at)
         if self.starts:
             start = self.starts[0]
             self.turn_start = start if self.turn_start is None else min(self.turn_start, start)
@@ -114,8 +117,24 @@ class SpeechClock:
         # fragments. Reuse its earliest original onset; never receipt time.
         return self.turn_start
 
+    def _match_recent_speech(self, received_at):
+        # Provider finalisation can trail the audio. An unrelated onset many
+        # seconds earlier is not the reply, even if VAD called it speech.
+        cutoff = received_at - 4.0
+        ends = dict(self.ended)
+        recent = [(start, ends.get(start, start)) for start in self.starts
+                  if cutoff <= ends.get(start, start) <= received_at]
+        self.starts.clear()
+        if self.turn_last_audio is not None and self.turn_last_audio < cutoff:
+            self.turn_start = self.turn_last_audio = None
+        if recent:
+            start = recent[0][0]
+            self.turn_start = start if self.turn_start is None else min(self.turn_start, start)
+            self.turn_last_audio = max(end for _, end in recent)
+        return self.turn_start
+
     def end_turn(self, event_id):
-        self.turn_start = None
+        self.turn_start = self.turn_last_audio = None
         if type(event_id) is int:
             self.response_event_floor = max(self.response_event_floor, event_id)
 
@@ -142,10 +161,12 @@ def alignment_complete(response, audio):
 
 
 class ManagedPlivo:
-    def __init__(self, transport, provider, *, customer_name, emit, max_seconds=ATTENDED_CALL_MAX_SECONDS, farewell=None):
+    def __init__(self, transport, provider, *, customer_name, emit, max_seconds=ATTENDED_CALL_MAX_SECONDS,
+                 farewell=None, match_recent_speech=False):
         self.transport, self.provider, self.emit = transport, provider, emit
         self.customer_name, self.max_seconds = customer_name, max_seconds
-        self.clock = SpeechClock()
+        self.clock = SpeechClock(match_recent_speech=match_recent_speech)
+        self.unverified_transcripts = 0
         self.responses = {}
         self.output = asyncio.Queue(maxsize=256)
         self.audit = asyncio.Queue(maxsize=256)
@@ -205,7 +226,11 @@ class ManagedPlivo:
             "native_event_id": response.event_id, "revision": response.revision, "alignment_complete": response.complete})
         lower = response.text.lower()
         if success:
-            if "ai assistant" in lower and "recorded" in lower and "fictional" in lower:
+            engineering_notice = "ai assistant" in lower and "recorded" in lower and "fictional" in lower
+            uk_opening = (self.clock.match_recent_speech and response.event_id == 1
+                          and "an automated assistant calling on behalf of brightwater plumbing and heating."
+                          " this call is recorded." in lower)
+            if engineering_notice or uk_opening:
                 self.notice_delivered = True
             question = "Am I speaking with " + self.customer_name + "?"
             if question.lower() in lower:
@@ -350,8 +375,12 @@ class ManagedPlivo:
                 identifier = item["event_id"]
                 if identifier in self.clock.seen_transcripts:
                     continue
-                started = self.clock.transcript(identifier)
-                self.record("user_utterance", {"source": "plivo_elevenlabs_observer", "text": item["user_transcript"],
+                started = self.clock.transcript(identifier, received_at=time.time())
+                text = item["user_transcript"]
+                if self.clock.match_recent_speech and started is None:
+                    self.unverified_transcripts += 1
+                    text = "[Unverified transcription]"
+                self.record("user_utterance", {"source": "plivo_elevenlabs_observer", "text": text,
                     "speech_timing_verified": started is not None, "native_event_id": identifier},
                     at=started, key="managed-caller:" + str(identifier))
             elif kind == "agent_tool_response" and event["agent_tool_response"]["tool_name"] == "end_call":
@@ -530,7 +559,8 @@ async def run_managed_phone(app, context, cfg, transport, event, *, preconnected
             "conversation_config_override": {"conversation": {"text_only": False}}})
         startup_audio_discarded = transport.discard_startup_audio() if discard_startup_audio else 0
         bridge = ManagedPlivo(transport, provider, customer_name=details["customer_name"], emit=emit,
-                              max_seconds=max(1, int(context["max_seconds"])))
+                              max_seconds=max(1, int(context["max_seconds"])),
+                              match_recent_speech=discard_startup_audio)
         from brightwater.managed.closing import farewell
         async def close_politely():
             from brightwater.managed.boundaries import CLOSING
@@ -556,6 +586,7 @@ async def run_managed_phone(app, context, cfg, transport, event, *, preconnected
                     "vad_sample_rate": 16000, "vad_starts": getattr(bridge, "vad_starts", 0),
                     "vad_mapped_starts": getattr(bridge, "vad_mapped_starts", 0),
                     "startup_audio_discarded_samples": startup_audio_discarded,
+                    "unverified_transcripts": getattr(bridge, "unverified_transcripts", 0),
                     "preopening_speech_discarded": getattr(getattr(bridge, "clock", None), "preopening_discarded", 0),
                     "responses": [{"event_id": r.event_id, "text": r.text[:8000],
                         "alignment": r.alignment[:8000], "complete": r.complete,

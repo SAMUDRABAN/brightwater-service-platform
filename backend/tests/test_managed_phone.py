@@ -485,6 +485,62 @@ def test_split_native_asr_keeps_original_onset_and_rejects_late_prior_turn():
     assert clock.transcript(91) is None
 
 
+def test_uk_clock_matches_fresh_yes_and_refuses_a_transcript_from_stale_audio():
+    clock = SpeechClock(match_recent_speech=True)
+    clock.end_turn(1)
+    clock.starts.extend([102.84, 112.1])
+    clock.ended.extend([(102.84, 103.25), (112.1, 112.6)])
+    # The first onset belongs to startup audio; the actual reply follows playback.
+    assert clock.transcript(76, received_at=113.37) == 112.1
+    assert clock.transcript(77, received_at=114) == 112.1  # split ASR still shares original onset
+    clock.end_turn(77)
+    clock.starts.append(122.43)
+    clock.ended.append((122.43, 127.28))
+    assert clock.transcript(225, received_at=137.39) is None
+
+    # A genuine early yes still has its original timing, never the later receipt timestamp.
+    clock.starts.append(144.03)
+    clock.ended.append((144.03, 144.55))
+    assert clock.transcript(293, received_at=148.05) == 144.03
+
+
+def test_uk_unverified_transcription_is_not_attributed_to_caller():
+    import asyncio
+    from types import SimpleNamespace
+
+    from test_plivo_audio import ready
+
+    from brightwater.managed import plivo
+
+    class Provider:
+        async def __aiter__(self):
+            yield {"type": "user_transcript", "user_transcription_event": {
+                "event_id": 225, "user_transcript": "Unsupported phrase from quiet audio."}}
+
+    async def scenario():
+        transport, _ = await ready()
+        bridge = plivo.ManagedPlivo(transport, Provider(), customer_name="Fixture", emit=None,
+                                    match_recent_speech=True)
+        try:
+            await bridge.receive()
+            kind, payload, _, _ = bridge.audit.get_nowait()
+            assert kind == "user_utterance"
+            assert payload["text"] == "[Unverified transcription]"
+            assert not payload["speech_timing_verified"] and bridge.unverified_transcripts == 1
+
+            bridge.playing.append(Response(1, text="Hi, I’m Alex, an automated assistant calling on behalf "
+                "of Brightwater Plumbing and Heating. This call is recorded. Am I speaking with Fixture?",
+                complete=True))
+            bridge.playback_finished(SimpleNamespace(interrupted=False))
+            assert bridge.audit.get_nowait()[1]["playback_completed"]
+            assert bridge.audit.get_nowait()[1]["notice_delivered"]
+        finally:
+            await bridge.vad_stream.aclose()
+            await transport.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_phone_quality_never_hides_consent_or_adds_speech_before_commit():
     from brightwater.managed.agent import config
     phone = config('kb', 'https://example.test', 'provider-secret', phone=True)
