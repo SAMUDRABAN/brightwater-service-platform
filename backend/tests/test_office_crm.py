@@ -501,7 +501,8 @@ def test_office_can_create_customer_approve_number_and_schedule_without_dialling
         "schedule_at": "2026-11-22T12:15",
     }).json()["error"] == "outside_calling_window"
     assert client.post(path + "/schedule", headers=auth, json=schedule).status_code == 200
-    assert client.get(path, headers=auth).json()["scheduled_call_at"].startswith("2026-11-18T12:15")
+    saved = datetime.fromisoformat(client.get(path, headers=auth).json()["scheduled_call_at"])
+    assert saved == datetime(2026, 11, 18, 12, 15, tzinfo=UTC)
     assert client.post(path + "/schedule", headers=auth, json={"schedule_at": None}).json()["scheduled_call_at"] is None
     assert client.post(path + "/schedule", headers=auth, json=schedule).status_code == 200
     appointment = datetime(2026, 11, 18, 12, 15, tzinfo=UTC)
