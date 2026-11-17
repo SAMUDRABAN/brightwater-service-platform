@@ -490,17 +490,21 @@ def test_uk_clock_matches_fresh_yes_and_refuses_a_transcript_from_stale_audio():
     clock.end_turn(1)
     clock.starts.extend([102.84, 112.1])
     clock.ended.extend([(102.84, 103.25), (112.1, 112.6)])
+    clock.levels.extend([(112.2, .02, 7000), (112.22, .02, 7400)])
     # The first onset belongs to startup audio; the actual reply follows playback.
     assert clock.transcript(76, received_at=113.37) == 112.1
     assert clock.transcript(77, received_at=114) == 112.1  # split ASR still shares original onset
     clock.end_turn(77)
     clock.starts.append(122.43)
-    clock.ended.append((122.43, 127.28))
+    clock.ended.extend([(122.43, 127.28), (135.0, 135.8)])
+    clock.starts.append(135.0)
+    clock.levels.extend([(135.1, .02, 210), (135.12, .02, 470)])
     assert clock.transcript(225, received_at=137.39) is None
 
     # A genuine early yes still has its original timing, never the later receipt timestamp.
     clock.starts.append(144.03)
     clock.ended.append((144.03, 144.55))
+    clock.levels.extend([(144.1, .02, 7200), (144.12, .02, 6800)])
     assert clock.transcript(293, received_at=148.05) == 144.03
 
 

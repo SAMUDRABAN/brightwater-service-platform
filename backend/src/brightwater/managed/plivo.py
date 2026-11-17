@@ -4,6 +4,7 @@ Carrier authentication/recording/admission remain in plivo_gateway. Local VAD is
 used only for original speech evidence; ElevenLabs owns ASR, turns, LLM and TTS.
 """
 import asyncio
+import audioop
 import base64
 import contextlib
 import json
@@ -42,6 +43,7 @@ class SpeechClock:
     def __init__(self, *, match_recent_speech=False):
         self.match_recent_speech = match_recent_speech
         self.frames = deque(maxlen=512)
+        self.levels = deque(maxlen=1500)
         self.samples = 0
         self.starts = deque(maxlen=32)
         self.ended = deque(maxlen=32)
@@ -58,6 +60,8 @@ class SpeechClock:
             raise ValueError("Original carrier frame timestamp required")
         self.frames.append((self.samples, frame.samples_per_channel, at - frame.duration))
         self.samples += frame.samples_per_channel
+        if self.match_recent_speech:
+            self.levels.append((at, frame.duration, audioop.rms(frame.data, 2)))
 
     def speech(self, index, duration, *, sample_rate=8000):
         # Include one inference window conservatively, not the silence padding. Never retimestamp an early yes
@@ -122,8 +126,20 @@ class SpeechClock:
         # seconds earlier is not the reply, even if VAD called it speech.
         cutoff = received_at - 4.0
         ends = dict(self.ended)
-        recent = [(start, ends.get(start, start)) for start in self.starts
-                  if cutoff <= ends.get(start, start) <= received_at]
+        peak = max((level for _, _, level in self.levels), default=0)
+        # Require a brief amount of discernible audio as well as a VAD hit.
+        # Keep the floor low on quiet lines and cap it on loud lines.
+        floor = max(80, min(400, peak // 20))
+        recent = []
+        for start in self.starts:
+            end = ends.get(start)
+            if not cutoff <= (end if end is not None else start) <= received_at:
+                continue
+            end = end if end is not None else received_at
+            voiced = sum(duration for at, duration, level in self.levels
+                         if start < at <= end and level >= floor)
+            if voiced >= .04:
+                recent.append((start, end))
         self.starts.clear()
         if self.turn_last_audio is not None and self.turn_last_audio < cutoff:
             self.turn_start = self.turn_last_audio = None
