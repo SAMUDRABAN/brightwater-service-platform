@@ -445,13 +445,13 @@ class ProviderSocket:
             yield json.loads(message)
 
 
-def managed_socket(url, *, open_timeout=15):
+def managed_socket(url, *, open_timeout=15, close_timeout=10):
     endpoint = urlparse(url)
     if (endpoint.scheme != "wss" or endpoint.hostname != "api.elevenlabs.io"
             or endpoint.path != "/v1/convai/conversation" or endpoint.username
             or endpoint.password or endpoint.port not in (None, 443)):
         raise ValueError("Unexpected managed provider endpoint")
-    return connect(url, max_size=2_000_000, open_timeout=open_timeout, close_timeout=2)
+    return connect(url, max_size=2_000_000, open_timeout=open_timeout, close_timeout=close_timeout)
 
 
 def runtime_headers(context, cfg):
@@ -466,7 +466,7 @@ async def preconnect_managed_phone(app, context, cfg, stack):
     response = await app.state.http.post(cfg.api_url + "/runtime/managed/preconnect",
         headers=runtime_headers(context, cfg), timeout=5)
     response.raise_for_status()
-    socket = await stack.enter_async_context(managed_socket(response.json()["signed_url"], open_timeout=5))
+    socket = await stack.enter_async_context(managed_socket(response.json()["signed_url"], open_timeout=5, close_timeout=2))
     timing["provider_socket_ready_at"] = time.time()
     return socket
 

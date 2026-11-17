@@ -229,14 +229,14 @@ def install(app, operator, scoped_call, startup_call):
                 raise Rejected("managed_phone_destination", "The carrier call must use the owned engineering destination", 403)
             return cfg, agent_id, db.get(m.Customer, call.customer_id).name
 
-    def phone_url(redis, call, cfg, agent_id):
+    def phone_url(redis, call, cfg, agent_id, *, timeout=15):
         from brightwater.managed.startup import consume, valid_url
 
         url_started = time.perf_counter()
         url = consume(redis, call.id, cfg, agent_id=agent_id)
         prepared = url is not None
         if url is None:
-            with httpx.Client(timeout=5) as client:
+            with httpx.Client(timeout=timeout) as client:
                 response = client.get("https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
                     headers={"xi-api-key": cfg.managed_api_key.get_secret_value()}, params={"agent_id": agent_id})
                 response.raise_for_status()
@@ -261,7 +261,7 @@ def install(app, operator, scoped_call, startup_call):
         redis = broker()
         if not redis.set("managed:phone-preconnect:" + call.id, "1", nx=True, ex=ATTENDED_SESSION_TTL_SECONDS):
             raise Rejected("preconnect_already_requested", "This call already requested its provider connection")
-        return {"signed_url": phone_url(redis, call, cfg, agent_id)}
+        return {"signed_url": phone_url(redis, call, cfg, agent_id, timeout=5)}
 
     @app.post("/runtime/managed/session")
     def phone_session(call: Annotated[m.Call, Depends(scoped_call)],
