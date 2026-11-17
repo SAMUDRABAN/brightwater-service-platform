@@ -181,6 +181,24 @@ def install_twilio(app, cfg, event, run_voice):
     token = cfg.twilio_auth_token.get_secret_value()
     caller_id = cfg.twilio_from_number.get_secret_value()
 
+    preconnections = {}
+
+    def prepare_connection(sid, context):
+        from brightwater.managed.plivo import ManagedPreconnection
+
+        pending = ManagedPreconnection(app, context, cfg)
+        preconnections[sid] = pending
+        app.state.tasks.add(pending.task)
+
+        def forget(task):
+            app.state.tasks.discard(task)
+            if preconnections.get(sid) is pending:
+                del preconnections[sid]
+            if not task.cancelled():
+                task.exception()
+
+        pending.task.add_done_callback(forget)
+
     async def bound(sid, fields, *, check_numbers):
         context = await app.state.store.get(sid)
         actual = fields.get("CallSid", "")
@@ -202,9 +220,13 @@ def install_twilio(app, cfg, event, run_voice):
             context, actual = await bound(sid, fields, check_numbers=True)
             if context.get("status") == "ended" or time.time() - context["created"] > 90:
                 raise HTTPException(410)
-            context.update(call_uuid=actual, request_uuid=actual, status="answered",
-                           answer_verified=True, answer_callback_at=time.time())
+            first_answer = not context.get("answer_verified")
+            context.update(call_uuid=actual, request_uuid=actual, status="answered", answer_verified=True)
+            if first_answer:
+                context["answer_callback_at"] = time.time()
             await app.state.store.put(sid, context)
+            if first_answer and cfg.voice_backend == "elevenlabs" and cfg.gateway_managed_preconnect:
+                prepare_connection(sid, context)
         return Response(stream_xml(cfg.gateway_origin, sid), media_type="application/xml")
 
     @app.post("/twilio/status/{sid}")
@@ -260,7 +282,12 @@ def install_twilio(app, cfg, event, run_voice):
         await ws.accept()
         task = asyncio.current_task()
         app.state.tasks.add(task)
+        pending = preconnections.get(sid)
+        if pending:
+            pending.claimed.set()
         try:
-            await run_voice(app, TwilioMedia(ws), context, cfg, event, account_id=account)
+            await run_voice(app, TwilioMedia(ws), context, cfg, event, account_id=account, preconnection=pending)
         finally:
+            if pending:
+                await pending.close()
             app.state.tasks.discard(task)

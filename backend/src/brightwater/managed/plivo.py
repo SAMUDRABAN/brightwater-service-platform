@@ -471,6 +471,34 @@ async def preconnect_managed_phone(app, context, cfg, stack):
     return socket
 
 
+class ManagedPreconnection:
+    """Keep one speculative socket alive for its authenticated carrier stream."""
+
+    def __init__(self, app, context, cfg):
+        self.timing = {}
+        self.claimed = asyncio.Event()
+        self.ready = asyncio.get_running_loop().create_future()
+        self.task = asyncio.create_task(self._open(app, {**context, "startup_timing": self.timing}, cfg))
+
+    async def _open(self, app, context, cfg):
+        async with contextlib.AsyncExitStack() as stack:
+            try:
+                socket = await preconnect_managed_phone(app, context, cfg, stack)
+            except Exception:
+                self.timing["provider_preconnect_failed_at"] = time.time()
+                self.ready.set_result(None)
+                return
+            self.ready.set_result(socket)
+            try:
+                await asyncio.wait_for(self.claimed.wait(), timeout=12)
+            except TimeoutError:
+                return
+            await asyncio.Future()  # The media handler cancels this task to close the socket.
+
+    async def close(self):
+        self.task.cancel()
+        await asyncio.gather(self.task, return_exceptions=True)
+
 async def run_managed_phone(app, context, cfg, transport, event, *, preconnected=None):
     timing = context.setdefault("startup_timing", {})
     if preconnected is not None and (

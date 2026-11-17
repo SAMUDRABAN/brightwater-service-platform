@@ -583,7 +583,7 @@ def create_app(cfg):
     return app
 
 
-async def run_voice(app, ws, context, cfg, event, *, account_id=None):
+async def run_voice(app, ws, context, cfg, event, *, account_id=None, preconnection=None):
     from livekit.agents.utils import http_context
 
     from brightwater.plivo_audio import AudioTransportError, PlivoAudioTransport
@@ -643,8 +643,6 @@ async def run_voice(app, ws, context, cfg, event, *, account_id=None):
         startup_timing["answer_callback_at"] = context["answer_callback_at"]
     context["startup_timing"] = startup_timing
     session = None
-    provider_stack = contextlib.AsyncExitStack()
-    provider_warmup = None
     stage = "media_start"
     diagnostic_hold = False
     await transport.start()
@@ -652,10 +650,6 @@ async def run_voice(app, ws, context, cfg, event, *, account_id=None):
     try:
         await transport.wait_ready()
         startup_timing["authenticated_stream_ready_at"] = time.time()
-        if cfg.gateway_carrier == "twilio" and cfg.voice_backend == "elevenlabs" and cfg.gateway_managed_preconnect:
-            from brightwater.managed.plivo import preconnect_managed_phone
-
-            provider_warmup = asyncio.create_task(preconnect_managed_phone(app, context, cfg, provider_stack))
         # Carrier duplex recording starts before any agent notice/account speech.
         stage = "carrier_recording_start"
         recording_id = await confirmed_recording(app.state.redis, context["sid"])
@@ -668,12 +662,9 @@ async def run_voice(app, ws, context, cfg, event, *, account_id=None):
         if cfg.voice_backend == "elevenlabs":
             from brightwater.managed.plivo import run_managed_phone
             stage = "managed_conversation"
-            socket = None
-            if provider_warmup:
-                try:
-                    socket = await provider_warmup
-                except Exception:
-                    startup_timing["provider_preconnect_failed_at"] = time.time()
+            socket = await preconnection.ready if preconnection and not done.is_set() else None
+            if preconnection:
+                startup_timing.update(preconnection.timing)
             if not done.is_set():
                 await run_managed_phone(app, context, cfg, transport, event, preconnected=socket)
             return
@@ -765,11 +756,6 @@ async def run_voice(app, ws, context, cfg, event, *, account_id=None):
                 "carrier_answered": context.get("answer_verified") is True})
     finally:
         done.set()
-        if provider_warmup:
-            provider_warmup.cancel()
-            await asyncio.gather(provider_warmup, return_exceptions=True)
-        with contextlib.suppress(Exception):
-            await provider_stack.aclose()
         if metric_tasks:
             await asyncio.gather(*metric_tasks, return_exceptions=True)
         if session:

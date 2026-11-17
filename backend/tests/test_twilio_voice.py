@@ -5,6 +5,7 @@ import hmac
 import json
 import time
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from test_plivo_gateway import config
@@ -21,7 +22,7 @@ RECIPIENT = "+442079460124"
 TOKEN = "test-only"
 
 
-def test_twilio_answer_binds_signed_call_and_recording_once():
+def test_twilio_answer_binds_signed_call_and_recording_once(monkeypatch):
     cfg = config(gateway_country="GB", gateway_carrier="twilio", voice_backend="elevenlabs",
                  twilio_account_sid=ACCOUNT, twilio_auth_token=TOKEN, twilio_from_number=CALLER)
     app = create_app(cfg)
@@ -55,7 +56,14 @@ def test_twilio_answer_binds_signed_call_and_recording_once():
         async def rpush(self, key, value):
             self.jobs.append((key, value))
 
-    app.state.store, app.state.redis = Store(), Redis()
+    attempts = []
+
+    def preconnect(app, context, cfg):
+        attempts.append(context["call_uuid"])
+        return SimpleNamespace(task=asyncio.get_running_loop().create_future())
+
+    monkeypatch.setattr("brightwater.managed.plivo.ManagedPreconnection", preconnect)
+    app.state.store, app.state.redis, app.state.tasks = Store(), Redis(), set()
     client = TestClient(app)
 
     def post(path, fields):
@@ -67,8 +75,10 @@ def test_twilio_answer_binds_signed_call_and_recording_once():
     fields = {"AccountSid": ACCOUNT, "CallSid": CALL, "From": CALLER, "To": RECIPIENT}
     assert client.post(answer, data=fields).status_code == 403
     assert post(answer, fields | {"To": "+442079460125"}).status_code == 403
+    assert not attempts
     response = post(answer, fields)
-    assert response.status_code == 200
+    assert response.status_code == 200 and attempts == [CALL]
+    assert post(answer, fields).status_code == 200 and attempts == [CALL]
     assert 'wss://voice.example.test/twilio/media/fixture' in response.text
     assert state["call_uuid"] == CALL
     recording = "/twilio/recording/fixture"
