@@ -102,6 +102,12 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
         if not phone:
             raise ValueError("A customer campaign requires the telephone profile")
         prompt = prompt.replace("using fictional engineering accounts and a real isolated booking database", "using verified live account and diary tools")
+        prompt = prompt.replace(
+            "Keep that offer to one short question.",
+            "Keep that offer to one short question, such as ‘Would you like to arrange that visit?’ "
+            "Leave out ‘today’ and any suggested visit date until the diary has returned availability.",
+            1,
+        )
         prompt = prompt.replace("The opening gives AI/recording/test disclosure.", "The opening gives automated-assistant and recording disclosure; do not describe a customer call as a fictional test.")
     return {
         "name": "Brightwater Managed Candidate — UK customer reminders" if campaign else "Brightwater Managed Candidate — Plivo phone" if phone else "Brightwater Managed Candidate — private engineering",
