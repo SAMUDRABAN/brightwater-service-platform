@@ -328,6 +328,17 @@ def install(app, operator):
                 query.order_by(m.DiaryWindow.day, m.Engineer.name, m.DiaryWindow.period.desc())
             )
         )
+        block_kind = case(
+            (m.DiaryBlock.source == "assessment_prebooked_fixture", "pre_existing_work"),
+            else_="blocked_time",
+        )
+        blocks = {}
+        for window_id, kind, minutes in db.execute(
+            select(m.DiaryBlock.window_id, block_kind, func.sum(m.DiaryBlock.minutes))
+            .where(m.DiaryBlock.window_id.in_([w.id for w, _ in windows]))
+            .group_by(m.DiaryBlock.window_id, block_kind).order_by(block_kind)
+        ):
+            blocks.setdefault(window_id, []).append({"kind": kind, "minutes": minutes})
         return [
             {
                 "id": w.id,
@@ -338,6 +349,7 @@ def install(app, operator):
                 "gas_registered": e.gas_registered,
                 "capacity_minutes": w.capacity_minutes,
                 "used_minutes": w.used_minutes,
+                "blocks": blocks.get(w.id, []),
             }
             for w, e in windows
         ]

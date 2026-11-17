@@ -1251,6 +1251,10 @@ td .status-badge {
   color: var(--navy);
   font-weight: 600;
 }
+.diary-block {
+  background: var(--paper, #f4f6f8);
+  border-left-color: var(--slate);
+}
 .diary-appointment small {
   margin: 3px 0 0;
   font-weight: 400;

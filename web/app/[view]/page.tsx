@@ -442,7 +442,7 @@ async function Diary({ data, p }: { data: Dashboard; p: Search }) {
         </div>
         <div>
           <span className="legend-dot occupied" />
-          <span>Booked and pre-existing work</span>
+          <span>Booked visits and reserved time</span>
         </div>
       </div>
       <section className="panel">
@@ -488,6 +488,20 @@ async function Diary({ data, p }: { data: Dashboard; p: Search }) {
                           ? `${(w.capacity_minutes - w.used_minutes) / 60}h available`
                           : "Plumbing work only"}
                       </small>
+                      {w.blocks.map((block) => (
+                        <div className="diary-appointment diary-block" key={block.kind}>
+                          {block.kind === "pre_existing_work"
+                            ? "Pre-existing work"
+                            : "Blocked time"}
+                          <small>
+                            {block.minutes % 60 === 0
+                              ? `${block.minutes / 60}h`
+                              : `${block.minutes} min`}{" "}
+                            reserved
+                            {block.kind === "pre_existing_work" && " · Assessment fixture"}
+                          </small>
+                        </div>
+                      ))}
                       {appointments
                         .filter(
                           (a) =>

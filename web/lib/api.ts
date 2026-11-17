@@ -63,6 +63,7 @@ export type DiaryWindow = {
   gas_registered: boolean;
   capacity_minutes: number;
   used_minutes: number;
+  blocks: { kind: "pre_existing_work" | "blocked_time"; minutes: number }[];
 };
 export type Dashboard = {
   environment: string;

@@ -432,3 +432,13 @@ def test_diary_lock_refreshes_previously_read_capacity():
         locked = svc.lock_diary_windows(db, {window.id})
         assert locked[window.id] is window
         assert window.used_minutes == 60
+
+
+def test_diary_explains_pre_existing_capacity_without_creating_visits(staff):
+    auth = headers("dan")
+    windows = client.get("/v1/office/diary", headers=auth).json()
+    morning = next(w for w in windows if w["day"] == "2026-11-17" and w["period"] == "MORNING")
+    assert morning["blocks"] == [{"kind": "pre_existing_work", "minutes": 180}]
+    assert morning["used_minutes"] == morning["capacity_minutes"] == 180
+    assert all(w["engineer_id"] == "dan" for w in windows)
+    assert client.get("/v1/dashboard", headers=auth).json()["appointments"] == []
