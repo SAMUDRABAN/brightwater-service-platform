@@ -57,7 +57,8 @@ def test_late_complaint_enriches_existing_final_outcome_without_duplicate_record
             occurred_at=end_time - timedelta(seconds=1), payload={"detail": "Customer complained before disconnect"}))
         assert call.outcome == "Complaint"
         assert call.ended_at == end_time
-        assert call.summary == "The call ended early. No arrangement was completed."
+        assert call.summary == "The caller raised a complaint. Alex saved a follow-up for Mark. Mark should review and handle the complaint."
+        assert not call.outcome_review_required
         assert db.scalar(select(func.count()).select_from(m.Call)) == 1
 
 

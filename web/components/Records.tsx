@@ -74,6 +74,12 @@ export function FollowupList({
                   <Link href={`/calls/${f.call_id}`}>{f.customer_name}</Link>
                 </h3>
                 <p>{f.summary || f.detail}</p>
+                {f.detail && f.detail !== f.summary && (
+                  <details className="followup-edit">
+                    <summary>Follow-up details</summary>
+                    <p style={{ whiteSpace: "pre-line" }}>{f.detail}</p>
+                  </details>
+                )}
                 <div className="record-meta">
                   <span>For {f.owner}</span>
                   {f.created_at && <span>{gbDate(f.created_at)}</span>}
@@ -288,6 +294,7 @@ export function CallTable({ items }: { items: CallRecord[] }) {
                       ? "Needs review"
                       : "In progress")}
                 </Status>
+                {c.outcome_review_required && <small>Technical review required</small>}
               </td>
               <td className="numeric">{duration(c.duration_seconds)}</td>
               <td>

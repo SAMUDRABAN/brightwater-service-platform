@@ -147,6 +147,7 @@ class Call(Base):
     session_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
     provider_id: Mapped[str | None] = mapped_column(String(160), unique=True)
     outcome: Mapped[str | None] = mapped_column(String(50))
+    outcome_review_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     summary: Mapped[str] = mapped_column(Text, default="")
     media_state: Mapped[str] = mapped_column(String(30), default="not_available")
     recording_key: Mapped[str | None] = mapped_column(String(500))

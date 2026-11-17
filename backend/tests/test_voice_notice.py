@@ -318,7 +318,7 @@ def test_recipient_is_seeded_and_failed_identity_cannot_loop_indefinitely():
 
 
 @pytest.mark.parametrize('evidence', ['connected', 'signed_status', 'gateway_failure', 'reconciled', 'unanswered', 'untrusted_claim'])
-def test_answered_calls_are_not_classified_as_no_answer(evidence):
+def test_failed_calls_use_disposition_and_review_independently(evidence):
     from uuid import uuid4
 
     from conftest import make_call
@@ -341,7 +341,8 @@ def test_answered_calls_are_not_classified_as_no_answer(evidence):
         svc.finalise(db, call, 'Engineering call ended without a booking.')
         svc.finalise(db, call, 'Engineering call ended without a booking.')
         answered = evidence not in {'unanswered', 'untrusted_claim'}
-        assert call.outcome is None if answered else call.outcome == 'No answer'
+        assert call.outcome == 'No answer'
+        assert call.outcome_review_required == answered
         reviews = db.scalars(select(m.Followup).where(m.Followup.call_id == call.id, m.Followup.kind == 'internal_review')).all()
         assert len(reviews) == (1 if answered else 0)
 

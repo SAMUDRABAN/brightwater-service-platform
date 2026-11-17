@@ -106,4 +106,8 @@ def update(db, booking_id, body, actor):
     db.add(m.CallEvent(call_id=call.id, provider_event_id=key,
         kind="office_booking_updated", occurred_at=now(), payload=payload))
     db.flush()
+    from brightwater.call_results import refresh_result
+
+    events = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id)))
+    refresh_result(db, call, events, historical=True)
     return {"id": booking.id, "state": booking.state}

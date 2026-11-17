@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     uk_test_caller_id: SecretStr = SecretStr("")
     uk_test_daily_limit: int = Field(default=6, ge=1, le=20)
     campaign_pilot_customer_id: str = ""
+    campaign_pilot_automatic: bool = False
     campaign_pilot_recipient: SecretStr = SecretStr("")
     campaign_daily_limit: int = Field(default=20, ge=1, le=20)
     managed_campaign_agent_id: str = ""
@@ -84,12 +85,14 @@ class Settings(BaseSettings):
             import re
 
             from brightwater.policy import Rejected, uk_phone
-            if not re.fullmatch(r"BW-[0-9]{4}", self.campaign_pilot_customer_id):
+            if not re.fullmatch(r"(?:ENGINEERING-QUEUE-)?BW-[0-9]{4}", self.campaign_pilot_customer_id):
                 raise ValueError("Pilot requires a fictional assessment customer ID")
             try:
                 uk_phone(pilot_recipient)
             except Rejected:
                 raise ValueError("Pilot requires a real approved UK test recipient") from None
+        if self.campaign_pilot_automatic and (not self.campaign_pilot_customer_id.startswith("ENGINEERING-QUEUE-") or self.campaign_daily_limit != 1):
+            raise ValueError("Automatic pilot requires one approved fixture and a one-call daily limit")
         if self.dialing_enabled:
             from brightwater.campaign import configuration_issues
             issues = configuration_issues(self)

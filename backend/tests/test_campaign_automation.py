@@ -256,7 +256,8 @@ def test_answered_carrier_failure_is_reported_and_quarantined_without_a_retry():
         contact = db.scalars(select(m.CampaignContact).where(
             m.CampaignContact.customer_id == call.customer_id)).one()
         assert call.outcome == 'No answer' and contact.stopped
-        assert 'carrier answered' in call.summary
+        assert call.outcome_review_required
+        assert 'line connected' in call.summary
         assert db.scalars(select(m.Followup).where(
             m.Followup.call_id == call.id, m.Followup.kind == 'internal_review')).one()
 
@@ -321,3 +322,44 @@ def test_pilot_does_not_enqueue_or_allow_other_destinations(monkeypatch):
         with pytest.raises(Rejected) as rejected:
             svc.check_dial_policy(db, svc.customer(db, 'BW-1056'), other, at)
         assert rejected.value.code == 'pilot_recipient_mismatch'
+
+
+def test_supervised_queue_ignores_uk_tests_and_enforces_retry_and_suppression(monkeypatch):
+    from brightwater import schemas as s
+
+    cfg = settings()
+    fixture = "ENGINEERING-QUEUE-BW-1107"
+    for key, value in {
+        "campaign_pilot_automatic": True, "campaign_pilot_customer_id": fixture,
+        "campaign_pilot_recipient": SecretStr("+442079460124"), "campaign_daily_limit": 1,
+    }.items():
+        monkeypatch.setattr(cfg, key, value)
+    at = AT.replace(hour=11)
+    monkeypatch.setattr(svc, "now", lambda: at)
+    with session() as db, db.begin():
+        db.add(m.Customer(id=fixture, name="Queue test", kind="homeowner", source_phone="Fictional"))
+        db.flush()
+        db.add(m.Property(id=fixture+"-P1", customer_id=fixture, address="Fictional"))
+        db.flush()
+        db.add(m.Obligation(id=m.uid(), property_id=fixture+"-P1", service="service", due_date=date(2026, 11, 25)))
+        svc.register_destination(db, fixture, "+442079460124", "Owned test line")
+        uk_call, _ = make_call(db, "BW-1056")
+        uk_call.time_band, uk_call.dispatched_at, uk_call.state = "uk_test", at, "finished"
+        queued = enqueue_due(db, at)
+        assert len(queued) == 1
+        call = db.get(m.Call, queued[0])
+        assert call.customer_id == fixture and call.attempt == 1
+        call.state, call.dispatched_at = "dispatching", at
+        svc.record_event(db, call.id, s.EventInput(provider_event_id="carrier-no-answer", kind="no_answer", occurred_at=at))
+        contact = db.scalar(select(m.CampaignContact).where(m.CampaignContact.customer_id == fixture))
+        assert contact.next_attempt_at >= at + timedelta(hours=24)
+        assert enqueue_due(db, at + timedelta(hours=1)) == []
+        later = max(contact.next_attempt_at, at + timedelta(hours=24))
+        early_retry = enqueue_due(db, later)
+        assert len(early_retry) == 1
+        retry = db.get(m.Call, early_retry[0])
+        assert retry.attempt == 2 and retry.time_band != call.time_band
+        retry.state = "cancelled"
+        db.add(m.Suppression(phone="+442079460124", customer_id=fixture, evidence="Synthetic policy test"))
+        db.flush()
+        assert enqueue_due(db, later + timedelta(hours=1)) == []

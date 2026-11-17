@@ -442,3 +442,26 @@ def test_diary_explains_pre_existing_capacity_without_creating_visits(staff):
     assert morning["used_minutes"] == morning["capacity_minutes"] == 180
     assert all(w["engineer_id"] == "dan" for w in windows)
     assert client.get("/v1/dashboard", headers=auth).json()["appointments"] == []
+
+
+def test_call_results_keep_later_suppression_out_of_earlier_call(staff):
+    from brightwater import schemas as s
+    from brightwater import services as svc
+    from brightwater.call_results import refresh_result
+    from brightwater.policy import now
+
+    with session() as db, db.begin():
+        old, _ = make_call(db, "BW-1041", verified=False)
+        later, _ = make_call(db, "BW-1072", verified=False)
+        svc.record_event(db, later.id, s.EventInput(provider_event_id="stop", kind="user_utterance",
+            occurred_at=now(), payload={"text": "Do not call me again"}))
+        svc.finalise(db, later, "")
+        assert later.outcome == "Do not call"
+        old.state = "finished"
+        refresh_result(db, old, [], historical=True)
+        assert old.outcome == "No answer" and old.outcome_review_required
+        assert "before any further contact" in old.summary
+        call_id = old.id
+    rows = client.get("/v1/office/calls?outcome=technical_review", headers=headers("sarah")).json()["items"]
+    assert [row["id"] for row in rows] == [call_id]
+    assert rows[0]["outcome"] == "No answer" and rows[0]["outcome_review_required"]

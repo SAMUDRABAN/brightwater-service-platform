@@ -18,6 +18,7 @@ type Detail = {
   attempt: number;
   created_at: string;
   outcome: string | null;
+  outcome_review_required: boolean;
   summary: string;
   media_state: string;
   duration_seconds: number | null;
@@ -73,7 +74,7 @@ export default async function CallPage({
   const review = call.events.find((e) => e.payload.source === "office_outcome_review");
   const { notice } = await searchParams;
   const reviewable =
-    !call.outcome &&
+    (call.outcome_review_required || !call.outcome) &&
     call.purpose !== "browser_simulation" &&
     !call.events.some((e) => e.kind === "recording_refused");
   const completed = ["finished", "failed"].includes(call.state);
@@ -99,6 +100,9 @@ export default async function CallPage({
           {call.outcome || (completed ? "Needs review" : "In progress")}
         </Status>
       </PageHeading>
+      {call.outcome_review_required && (
+        <p className="action-notice">Technical review required before further contact.</p>
+      )}
       {notice && <p role="status">{notice}</p>}
       <section className="panel">
         <PanelHeading title="Call summary">

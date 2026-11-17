@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from brightwater import models as m
 from brightwater.config import settings
 from brightwater.policy import (
-    OUTCOMES,
     SERVICES,
     UK,
     Rejected,
@@ -69,8 +68,25 @@ def register_destination(db, customer_id, phone, consent_reference):
     return dest
 
 
+def customer_campaign():
+    return (m.Call.purpose == "campaign", m.Call.time_band != "uk_test",
+            ~m.Call.customer_id.startswith("ENGINEERING-"))
+
+
+def daily_campaign_attempts(db, at, *, exclude_call=None):
+    cfg = settings()
+    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
+    scope = (m.Call.purpose == "campaign", m.Call.time_band != "uk_test",
+             m.Call.customer_id == cfg.campaign_pilot_customer_id) if cfg.campaign_pilot_customer_id else customer_campaign()
+    return db.scalar(select(func.count()).select_from(m.Call).where(*scope,
+        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1),
+        m.Call.id != exclude_call if exclude_call else True))
+
+
 def check_dial_policy(db, c, dest, at, *, exclude_call=None):
     cfg = settings()
+    if c.id.startswith("ENGINEERING-QUEUE-") and not cfg.campaign_pilot_automatic:
+        raise Rejected("pilot_disabled", "This fixture is reserved for the supervised automatic pilot")
     if cfg.campaign_pilot_customer_id and (
         c.id != cfg.campaign_pilot_customer_id or not dest
         or dest.phone != cfg.campaign_pilot_recipient.get_secret_value()
@@ -84,11 +100,7 @@ def check_dial_policy(db, c, dest, at, *, exclude_call=None):
     if suppressed(db, c.id, dest.phone):
         raise Rejected("suppressed", "This customer or number must not be called")
     year = at.astimezone(UK).year
-    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
-    day_attempts = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.purpose == "campaign",
-        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1),
-        m.Call.id != exclude_call if exclude_call else True))
-    if day_attempts >= settings().campaign_daily_limit:
+    if daily_campaign_attempts(db, at, exclude_call=exclude_call) >= cfg.campaign_daily_limit:
         raise Rejected("daily_campaign_limit", "The bounded daily customer-call allowance has been used")
     contact = db.scalar(select(m.CampaignContact).where(
         m.CampaignContact.customer_id == c.id, m.CampaignContact.year == year))
@@ -543,49 +555,28 @@ def finalise(db, call, summary):
         return call
     events = db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id)).all()
     kinds = {e.kind for e in events}
-    answered = call.conversation or "connected" in kinds or any(
-        e.payload.get("carrier_answered") is True and e.payload.get("source") in {
-            "signed_plivo_status", "signed_twilio_status", "voice_gateway_failure", "voice_gateway_diagnostic_hold",
-            "authenticated_carrier_reconciliation",
-        } for e in events)
-    facts = set()
-    mapping = {"gas_emergency": "Gas emergency advice", "co_alarm": "Gas emergency advice",
-               "urgent": "Urgent callback", "complaint": "Complaint", "callback": "Callback requested",
-               "lead": "Lead", "not_interested": "Not interested", "serviced_elsewhere": "Serviced elsewhere",
-               "wrong_number": "Wrong number", "not_available": "Not available", "voicemail": "Voicemail"}
-    facts.update(mapping[k] for k in kinds if k in mapping)
-    if db.scalar(select(m.Booking.id).where(m.Booking.call_id == call.id, m.Booking.state == "confirmed")):
-        facts.add("Booked")
-    if summary == "Call ended without a completed arrangement. Review the recorded details where available.":
-        summary = ("A confirmed booking is saved in the diary. Review its visit details and the recording below."
-                   if "Booked" in facts else "No confirmed booking remains for this call. Review its follow-ups and recording where available.")
-    dest = db.get(m.Destination, call.destination_id)
-    if suppressed(db, call.customer_id, dest.phone):
-        facts.add("Do not call")
-    technical_failure = answered and any(
-        e.kind == "failed" and e.payload.get("source") in {"voice_gateway_failure", "signed_plivo_status", "signed_twilio_status"}
-        for e in events
-    )
-    fallback = None
-    if "recording_refused" not in kinds and call.purpose not in {"managed_evaluation", "browser_simulation"} and (not answered or technical_failure):
-        fallback = "No answer"  # The assessment groups failed calls with No answer.
+    from brightwater.call_results import refresh_result
 
-    call.outcome = next((o for o in OUTCOMES if o in facts), fallback)
-    needs_review = call.outcome is None or (technical_failure and call.outcome == "No answer")
-    if technical_failure and call.outcome == "No answer":
-        summary = "The carrier answered, but a technical failure ended the call without a business outcome. Review before calling again."
-    if needs_review and answered and "recording_refused" not in kinds and not any(e.kind == "turn_state" and e.payload.get("source") == "boundary_terminal_requested" for e in events) and not db.scalar(
+    if call.purpose in {"managed_evaluation", "browser_simulation"}:
+        call.summary = summary
+    was_under_review = call.outcome_review_required
+    answered, technical_review = refresh_result(db, call, events)
+    if was_under_review and not technical_review:
+        for task in db.scalars(select(m.Followup).where(m.Followup.call_id == call.id,
+            m.Followup.kind == "internal_review", m.Followup.resolved.is_(False))):
+            task.resolved = True
+    if technical_review and not any(e.kind == "turn_state" and e.payload.get("source") == "boundary_terminal_requested" for e in events) and not db.scalar(
         select(m.Followup.id).where(m.Followup.call_id == call.id, m.Followup.kind == "internal_review").limit(1)
     ):
         db.add(m.Followup(call_id=call.id, kind="internal_review", owner="Sarah", priority=1,
-            detail="Answered call ended without a business outcome. Review the technical or identity issue before further contact.", requested=False))
-    call.state, call.ended_at, call.summary = "finished", call.ended_at or now(), summary
+            detail="The line connected without a confirmed business outcome. Review the call before any further contact.", requested=False))
+    call.state, call.ended_at = "finished", call.ended_at or now()
     connected = db.scalar(select(func.min(m.CallEvent.occurred_at)).where(
         m.CallEvent.call_id == call.id, m.CallEvent.kind == "connected"))
     if call.purpose == "browser_simulation":
         connected = call.created_at
     call.duration_seconds = max(0, int((call.ended_at - connected).total_seconds())) if connected else 0
-    if call.conversation or technical_failure or call.outcome not in {"No answer", "Voicemail", "Not available"}:
+    if call.conversation or technical_review or "recording_refused" in kinds or call.outcome not in {"No answer", "Voicemail", "Not available"}:
         stop_campaign(db, call)
     else:
         contact = db.scalar(select(m.CampaignContact).where(m.CampaignContact.customer_id == call.customer_id,

@@ -307,8 +307,8 @@ def campaign_status(db: DB):
 @app.get("/v1/dashboard", dependencies=OPERATOR)
 def dashboard(request: Request, db: DB):
     today = now().astimezone(UK).date()
-    call_rows = db.scalars(select(m.Call).where(m.Call.purpose == "campaign", m.Call.time_band != "uk_test")).all()
-    booked_customers = set(db.scalars(select(m.Booking.customer_id).join(m.Call, m.Call.id == m.Booking.call_id).where(m.Booking.state == "confirmed", m.Call.purpose == "campaign", m.Call.time_band != "uk_test")))
+    call_rows = db.scalars(select(m.Call).where(*svc.customer_campaign())).all()
+    booked_customers = set(db.scalars(select(m.Booking.customer_id).join(m.Call, m.Call.id == m.Booking.call_id).where(m.Booking.state == "confirmed", *svc.customer_campaign())))
     contacted = {c.customer_id for c in call_rows if c.dispatched_at}
     reached = {c.customer_id for c in call_rows if c.conversation}
     customer_count = db.scalar(select(func.count()).select_from(m.Customer).where(~m.Customer.id.startswith("ENGINEERING-")))

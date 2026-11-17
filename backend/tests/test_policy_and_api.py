@@ -160,14 +160,14 @@ def test_opt_out_backstop_does_not_infer_negation_or_quoted_commands(utterance):
 
 
 @pytest.mark.parametrize("utterance", ["Please stop recording", "Don't record this call", "I don't consent to recording"])
-def test_recording_refusal_closes_account_access_without_claiming_no_answer(utterance):
+def test_recording_refusal_records_failed_attempt_and_stops_access(utterance):
     with session() as db, db.begin():
         call, _ = make_call(db)
         event = s.EventInput(provider_event_id="recording-refusal", kind="user_utterance",
             occurred_at=datetime.now(UTC), payload={"text": utterance})
         svc.record_event(db, call.id, event)
         assert not call.identity_verified and call.state == "finished"
-        assert call.outcome is None
+        assert call.outcome == "No answer" and not call.outcome_review_required
         assert "declined recording" in call.summary
         assert db.scalar(select(func.count()).select_from(m.Booking)) == 0
         assert svc.record_event(db, call.id, event).id

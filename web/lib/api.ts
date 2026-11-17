@@ -7,6 +7,7 @@ export type CallRecord = {
   purpose: string;
   state: string;
   outcome: string | null;
+  outcome_review_required: boolean;
   summary: string | null;
   created_at: string;
   attempt: number;

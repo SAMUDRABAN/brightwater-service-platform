@@ -87,7 +87,8 @@ def test_managed_phone_reserves_with_real_policy_guard_and_exact_owner_reply():
         assert db.scalar(select(func.count()).select_from(m.Booking)) == 1
         event(db, call, "ended", now(), source="signed_plivo_status", carrier_answered=True)
         assert call.state == "finished" and call.outcome == "Booked"
-        assert call.summary == "A confirmed booking is saved in the diary. Review its visit details and the recording below."
+        assert "Alex saved a morning visit" in call.summary
+        assert "No office follow-up is open" in call.summary
 
 
 @pytest.mark.parametrize("failure", ["early_reply", "queued_only", "interrupted", "no_timing", "wrong_source", "no_postcode"])

@@ -29,13 +29,13 @@ def configuration_issues(cfg):
     return issues
 
 
-def due_customers(db, at=None):
+def due_customers(db, at=None, *, pilot=None):
     at = at or now()
     today = at.astimezone(UK).date()
     # One row per customer, including landlords with multiple due properties.
     # Overdue work goes to office review, not an endless historical autodial loop.
     return db.execute(select(m.Customer, func.min(m.Obligation.due_date).label('first_due'))
-        .select_from(m.Customer).join(m.Property, m.Property.customer_id == m.Customer.id).join(m.Obligation, m.Obligation.property_id == m.Property.id).where(~m.Customer.id.startswith("ENGINEERING-"),
+        .select_from(m.Customer).join(m.Property, m.Property.customer_id == m.Customer.id).join(m.Obligation, m.Obligation.property_id == m.Property.id).where(m.Customer.id == pilot if pilot else ~m.Customer.id.startswith("ENGINEERING-"),
             m.Obligation.resolved.is_(False), m.Obligation.due_date >= today,
             m.Obligation.due_date <= today + timedelta(days=28))
         .group_by(m.Customer.id).order_by((m.Customer.kind != 'landlord'), func.min(m.Obligation.due_date), m.Customer.id)).all()
@@ -45,12 +45,10 @@ def enqueue_due(db, at=None):
     at = at or now()
     from brightwater.config import settings
     cfg = settings()
-    if cfg.campaign_pilot_customer_id:
-        return []  # Only an operator may start the attended pilot.
+    if cfg.campaign_pilot_customer_id and not cfg.campaign_pilot_automatic:
+        return []  # An attended pilot remains manual by default.
     queued = []
-    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
-    dispatched = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.purpose == 'campaign',
-        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1)))
+    dispatched = svc.daily_campaign_attempts(db, at)
     if dispatched >= cfg.campaign_daily_limit:
         return queued
     active = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.state.in_(svc.ACTIVE)))
@@ -60,7 +58,7 @@ def enqueue_due(db, at=None):
     approved = set(db.scalars(select(m.Destination.customer_id).where(m.Destination.enabled.is_(True))))
     contacts = {c.customer_id: c for c in db.scalars(select(m.CampaignContact).where(
         m.CampaignContact.year == at.astimezone(UK).year))}
-    for person, _ in due_customers(db, at):
+    for person, _ in due_customers(db, at, pilot=cfg.campaign_pilot_customer_id):
         if person.id not in approved or person.contact_blocked:
             continue
         contact = contacts.get(person.id)

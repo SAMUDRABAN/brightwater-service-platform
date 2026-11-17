@@ -39,11 +39,11 @@ CallScope = Literal["all", "campaign", "uk_test", "engineering", "browser_simula
 
 
 def call_type():
-    return case((m.Call.time_band == "uk_test", "uk_test"), else_=m.Call.purpose)
+    return case((or_(m.Call.time_band == "uk_test", m.Call.customer_id.startswith("ENGINEERING-QUEUE-")), "uk_test"), else_=m.Call.purpose)
 
 
 def displayed_purpose(call):
-    return "uk_test" if call.time_band == "uk_test" else call.purpose
+    return "uk_test" if call.time_band == "uk_test" or call.customer_id.startswith("ENGINEERING-QUEUE-") else call.purpose
 
 
 def followup_row(db, value):
@@ -74,6 +74,7 @@ def call_row(call, name):
         "purpose": displayed_purpose(call),
         "state": call.state,
         "outcome": call.outcome,
+        "outcome_review_required": call.outcome_review_required,
         "summary": call.summary,
         "created_at": call.created_at,
         "attempt": call.attempt,
@@ -143,6 +144,12 @@ def install(app, operator):
             )
         )
         db.flush()
+        call = db.get(m.Call, value.call_id)
+        if call.state in {"finished", "failed"}:
+            from brightwater.call_results import refresh_result
+
+            events = list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id)))
+            refresh_result(db, call, events, historical=True)
         return followup_row(db, value)
 
     @app.get("/v1/office/customers/{customer_id}", dependencies=auth)
@@ -267,7 +274,9 @@ def install(app, operator):
                     m.Call.summary.ilike(term, escape="\\"),
                 )
             )
-        if outcome:
+        if outcome == "technical_review":
+            query = query.where(m.Call.outcome_review_required.is_(True))
+        elif outcome:
             query = query.where(
                 m.Call.outcome.is_(None) if outcome == "unclassified" else m.Call.outcome == outcome
             )
@@ -300,7 +309,8 @@ def install(app, operator):
             if prior.kind == body.disposition and prior.payload.get("note") == body.note:
                 return {"outcome": call.outcome}
             raise Rejected("outcome_already_reviewed", "This attempt already has a staff outcome")
-        if call.outcome is not None or call.state not in {"finished", "failed"} or call.purpose == "browser_simulation":
+        if ((call.outcome is not None and not call.outcome_review_required)
+            or call.state not in {"finished", "failed"} or call.purpose == "browser_simulation"):
             raise Rejected("outcome_review_unavailable", "Only a finished, unclassified telephone attempt can be reviewed")
         if db.scalar(select(m.CallEvent.id).where(m.CallEvent.call_id == call.id, m.CallEvent.kind == "recording_refused").limit(1)):
             raise Rejected("outcome_review_unavailable", "The caller refused recording")
@@ -313,6 +323,8 @@ def install(app, operator):
         for item in db.scalars(select(m.Followup).where(m.Followup.call_id == call.id,
                                 m.Followup.kind == "internal_review", m.Followup.resolved.is_(False))):
             item.resolved = True
+        from brightwater.call_results import refresh_result
+        refresh_result(db, call, list(db.scalars(select(m.CallEvent).where(m.CallEvent.call_id == call.id))), historical=True)
         return {"outcome": call.outcome}
 
     @app.get("/v1/office/diary", dependencies=auth)
