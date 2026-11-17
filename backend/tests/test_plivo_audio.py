@@ -374,6 +374,32 @@ def test_startup_preroll_stays_bounded_until_first_consumer_then_overflow_fails(
     asyncio.run(scenario())
 
 
+def test_discard_startup_audio_only_removes_packets_before_live_input():
+    async def scenario():
+        transport, _ = await ready(startup_preroll=True)
+
+        async def inbound(sequence, payload):
+            await transport.handle_message({
+                "event": "media", "sequenceNumber": sequence, "streamId": "stream",
+                "media": {"track": "inbound", "payload": base64.b64encode(payload).decode()},
+            })
+
+        await inbound(2, b"\xff" * 160)
+        await inbound(3, b"\xff" * 160)
+        assert transport.discard_startup_audio() == 320
+        assert transport._input.empty() and transport._input_bytes == 0
+
+        await inbound(4, b"\x80" * 160)
+        frame = await transport.audio_input.__anext__()
+        assert frame.samples_per_channel == 160 and any(frame.data)
+        assert "received_at" in frame.userdata
+        with pytest.raises(AudioTransportError, match="after its consumer attaches"):
+            transport.discard_startup_audio()
+        await transport.aclose()
+
+    asyncio.run(scenario())
+
+
 def test_unacknowledged_playback_times_out_and_releases_waiters_as_interrupted():
     async def scenario():
         transport, _ = await ready(playback_timeout=0.05)

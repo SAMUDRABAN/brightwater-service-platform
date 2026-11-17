@@ -499,7 +499,7 @@ class ManagedPreconnection:
         self.task.cancel()
         await asyncio.gather(self.task, return_exceptions=True)
 
-async def run_managed_phone(app, context, cfg, transport, event, *, preconnected=None):
+async def run_managed_phone(app, context, cfg, transport, event, *, preconnected=None, discard_startup_audio=False):
     timing = context.setdefault("startup_timing", {})
     if preconnected is not None and (
         not context.get("recording_id") or "connected_audit_completed_at" not in timing
@@ -528,6 +528,7 @@ async def run_managed_phone(app, context, cfg, transport, event, *, preconnected
         await provider.send_json({"type": "conversation_initiation_client_data",
             "dynamic_variables": {"customer_name": details["customer_name"], "secret__session_token": details["token"]},
             "conversation_config_override": {"conversation": {"text_only": False}}})
+        startup_audio_discarded = transport.discard_startup_audio() if discard_startup_audio else 0
         bridge = ManagedPlivo(transport, provider, customer_name=details["customer_name"], emit=emit,
                               max_seconds=max(1, int(context["max_seconds"])))
         from brightwater.managed.closing import farewell
@@ -554,6 +555,7 @@ async def run_managed_phone(app, context, cfg, transport, event, *, preconnected
                     "transport_close": transport.close_reason, "pending_playback": len(bridge.playing),
                     "vad_sample_rate": 16000, "vad_starts": getattr(bridge, "vad_starts", 0),
                     "vad_mapped_starts": getattr(bridge, "vad_mapped_starts", 0),
+                    "startup_audio_discarded_samples": startup_audio_discarded,
                     "preopening_speech_discarded": getattr(getattr(bridge, "clock", None), "preopening_discarded", 0),
                     "responses": [{"event_id": r.event_id, "text": r.text[:8000],
                         "alignment": r.alignment[:8000], "complete": r.complete,

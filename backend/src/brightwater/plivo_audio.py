@@ -245,6 +245,18 @@ class PlivoAudioTransport:
         if self.is_closed:
             raise AudioTransportError(self.failure_reason or "Transport closed")
 
+    def discard_startup_audio(self) -> int:
+        """Discard input queued before a provider could consume live audio."""
+        self._check_open()
+        if self.input_attached:
+            raise AudioTransportError("Cannot discard input after its consumer attaches")
+        discarded = 0
+        while not self._input.empty():
+            frame = self._input.get_nowait()
+            self._input_bytes -= frame.data.nbytes
+            discarded += frame.samples_per_channel
+        return discarded
+
     async def wait_ready(self) -> None:
         self._check_open()
         try:

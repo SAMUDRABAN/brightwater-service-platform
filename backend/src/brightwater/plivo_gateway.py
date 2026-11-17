@@ -666,7 +666,8 @@ async def run_voice(app, ws, context, cfg, event, *, account_id=None, preconnect
             if preconnection:
                 startup_timing.update(preconnection.timing)
             if not done.is_set():
-                await run_managed_phone(app, context, cfg, transport, event, preconnected=socket)
+                await run_managed_phone(app, context, cfg, transport, event, preconnected=socket,
+                                        discard_startup_audio=cfg.gateway_carrier == "twilio")
             return
         async with http_context.open(), httpx.AsyncClient(base_url=cfg.api_url, timeout=8) as client:
             agent = BrightwaterAgent(SimpleNamespace(room=CarrierRoom()), context["call_id"], context["session_token"], client, cfg=cfg, notice_required=True)

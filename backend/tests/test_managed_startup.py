@@ -237,7 +237,8 @@ def test_uk_preconnect_prepares_once_without_a_business_lease(prepared, monkeypa
         assert cache.get("managed:lease")
 
 
-def test_preconnected_socket_stays_quiet_until_recording_and_audit(monkeypatch):
+@pytest.mark.parametrize("use_preconnect", [True, False])
+def test_preconnected_socket_stays_quiet_until_recording_and_audit(monkeypatch, use_preconnect):
     from contextlib import AsyncExitStack
     from types import SimpleNamespace
 
@@ -248,6 +249,7 @@ def test_preconnected_socket_stays_quiet_until_recording_and_audit(monkeypatch):
     opened = []
     sent = []
     requests = []
+    events = []
     url = "wss://api.elevenlabs.io/v1/convai/conversation?token=fixture"
 
     class Socket:
@@ -262,12 +264,13 @@ def test_preconnected_socket_stays_quiet_until_recording_and_audit(monkeypatch):
 
         async def send(self, data):
             sent.append(json.loads(data))
+            events.append("initiate")
 
     class HTTP:
         async def post(self, address, **kwargs):
             requests.append(address)
             body = {"signed_url": url} if address.endswith("/preconnect") else {
-                "token": "fixture-tool-capability", "customer_name": "Fixture", "agent_id": "fixture"}
+                "signed_url": url, "token": "fixture-tool-capability", "customer_name": "Fixture", "agent_id": "fixture"}
             return httpx.Response(200, request=httpx.Request("POST", address), json=body)
 
     class Bridge:
@@ -275,7 +278,13 @@ def test_preconnected_socket_stays_quiet_until_recording_and_audit(monkeypatch):
             pass
 
         async def run(self):
+            assert events == ["initiate", "discard"]
             assert len(sent) == 1
+
+    class Transport:
+        def discard_startup_audio(self):
+            events.append("discard")
+            return 320
 
     monkeypatch.setattr(plivo, "connect", lambda *args, **kwargs: Socket())
     monkeypatch.setattr(plivo, "ManagedPlivo", Bridge)
@@ -292,8 +301,10 @@ def test_preconnected_socket_stays_quiet_until_recording_and_audit(monkeypatch):
                 await plivo.run_managed_phone(app, context, cfg, None, None, preconnected=socket)
             assert len(requests) == 1 and not sent
             context["startup_timing"]["connected_audit_completed_at"] = time.time()
-            await plivo.run_managed_phone(app, context, cfg, None, None, preconnected=socket)
-            assert requests[-1].endswith("/session?preconnected=true")
+            await plivo.run_managed_phone(app, context, cfg, Transport(), None,
+                                          preconnected=socket if use_preconnect else None,
+                                          discard_startup_audio=True)
+            assert requests[-1].endswith("/session?preconnected=true" if use_preconnect else "/session")
             assert sent[0]["type"] == "conversation_initiation_client_data"
         assert not opened
 
