@@ -18,6 +18,7 @@ from brightwater.policy import (
     explicit_yes,
     identity_affirmative,
     next_retry,
+    normalise_uk_phone,
     now,
     self_identifies,
     time_band,
@@ -53,7 +54,7 @@ def suppressed(db, customer_id, phone):
 def register_destination(db, customer_id, phone, consent_reference):
     control_lock(db)
     customer(db, customer_id)
-    uk_phone(phone)
+    phone = normalise_uk_phone(phone)
     if suppressed(db, customer_id, phone):
         raise Rejected("suppressed", "This customer or destination is permanently suppressed")
     if db.scalar(select(m.Call.id).where(m.Call.customer_id == customer_id, m.Call.state.in_(ACTIVE))):
@@ -83,7 +84,7 @@ def daily_campaign_attempts(db, at, *, exclude_call=None):
         m.Call.id != exclude_call if exclude_call else True))
 
 
-def check_dial_policy(db, c, dest, at, *, exclude_call=None):
+def check_dial_policy(db, c, dest, at, *, exclude_call=None, check_daily_limit=True):
     cfg = settings()
     if c.id.startswith("ENGINEERING-QUEUE-") and not cfg.campaign_pilot_automatic:
         raise Rejected("pilot_disabled", "This fixture is reserved for the supervised automatic pilot")
@@ -100,7 +101,7 @@ def check_dial_policy(db, c, dest, at, *, exclude_call=None):
     if suppressed(db, c.id, dest.phone):
         raise Rejected("suppressed", "This customer or number must not be called")
     year = at.astimezone(UK).year
-    if daily_campaign_attempts(db, at, exclude_call=exclude_call) >= cfg.campaign_daily_limit:
+    if check_daily_limit and daily_campaign_attempts(db, at, exclude_call=exclude_call) >= cfg.campaign_daily_limit:
         raise Rejected("daily_campaign_limit", "The bounded daily customer-call allowance has been used")
     contact = db.scalar(select(m.CampaignContact).where(
         m.CampaignContact.customer_id == c.id, m.CampaignContact.year == year))
@@ -127,7 +128,7 @@ def check_dial_policy(db, c, dest, at, *, exclude_call=None):
             raise Rejected("retry_band_used", "Use a different permitted time of day")
 
 
-def request_call(db, customer_id, request_key, *, at=None):
+def request_call(db, customer_id, request_key, *, at=None, from_scheduler=False):
     at = at or now()
     control_lock(db)
     existing = db.scalar(select(m.Call).where(m.Call.request_key == request_key))
@@ -136,6 +137,8 @@ def request_call(db, customer_id, request_key, *, at=None):
             raise Rejected("idempotency_mismatch", "Request key already belongs to another customer")
         return existing
     c = customer(db, customer_id)
+    if c.scheduled_call_at and (not from_scheduler or at < c.scheduled_call_at):
+        raise Rejected("call_scheduled", "Cancel or change the scheduled call before requesting another one")
     dest = db.scalar(select(m.Destination).where(m.Destination.customer_id == customer_id))
     check_dial_policy(db, c, dest, at)
     year = at.astimezone(UK).year
@@ -151,6 +154,7 @@ def request_call(db, customer_id, request_key, *, at=None):
     db.add(call)
     db.flush()
     db.add(m.Outbox(topic="calls.dispatch", aggregate_id=call.id))
+    c.scheduled_call_at = None
     return call
 
 

@@ -1,7 +1,7 @@
 """Automatic reminder selection and admission; never enables dialing itself."""
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from brightwater import models as m
 from brightwater import services as svc
@@ -29,16 +29,25 @@ def configuration_issues(cfg):
     return issues
 
 
-def due_customers(db, at=None, *, pilot=None):
+def due_customers(db, at=None, *, pilot=None, include_scheduled=False):
     at = at or now()
     today = at.astimezone(UK).date()
     # One row per customer, including landlords with multiple due properties.
     # Overdue work goes to office review, not an endless historical autodial loop.
+    regular = and_(m.Obligation.due_date >= today, m.Obligation.due_date <= today + timedelta(days=28))
+    if include_scheduled:
+        eligible = or_(and_(m.Customer.scheduled_call_at.is_(None), regular),
+                       m.Customer.scheduled_call_at <= at)
+    else:
+        eligible = regular
     return db.execute(select(m.Customer, func.min(m.Obligation.due_date).label('first_due'))
-        .select_from(m.Customer).join(m.Property, m.Property.customer_id == m.Customer.id).join(m.Obligation, m.Obligation.property_id == m.Property.id).where(m.Customer.id == pilot if pilot else ~m.Customer.id.startswith("ENGINEERING-"),
-            m.Obligation.resolved.is_(False), m.Obligation.due_date >= today,
-            m.Obligation.due_date <= today + timedelta(days=28))
-        .group_by(m.Customer.id).order_by((m.Customer.kind != 'landlord'), func.min(m.Obligation.due_date), m.Customer.id)).all()
+        .select_from(m.Customer).join(m.Property, m.Property.customer_id == m.Customer.id)
+        .join(m.Obligation, m.Obligation.property_id == m.Property.id)
+        .where(m.Customer.id == pilot if pilot else ~m.Customer.id.startswith("ENGINEERING-"),
+               m.Obligation.resolved.is_(False), eligible)
+        .group_by(m.Customer.id).order_by(m.Customer.scheduled_call_at.asc().nulls_last(),
+            (m.Customer.kind != 'landlord'), func.min(m.Obligation.due_date), m.Customer.id)).all()
+
 
 
 def enqueue_due(db, at=None):
@@ -55,21 +64,24 @@ def enqueue_due(db, at=None):
     budget = max(0, min(cfg.max_active_calls + 1 - active, cfg.campaign_daily_limit - dispatched))
     if not budget:
         return queued
+    svc.control_lock(db)
     approved = set(db.scalars(select(m.Destination.customer_id).where(m.Destination.enabled.is_(True))))
     contacts = {c.customer_id: c for c in db.scalars(select(m.CampaignContact).where(
         m.CampaignContact.year == at.astimezone(UK).year))}
-    for person, _ in due_customers(db, at, pilot=cfg.campaign_pilot_customer_id):
+    for person, _ in due_customers(db, at, pilot=cfg.campaign_pilot_customer_id, include_scheduled=True):
         if person.id not in approved or person.contact_blocked:
             continue
         contact = contacts.get(person.id)
-        if contact and (contact.stopped or contact.next_attempt_at and contact.next_attempt_at > at):
+        if contact and (contact.stopped or (not person.scheduled_call_at and contact.next_attempt_at and contact.next_attempt_at > at)):
             continue
         # Request policy serialises destination, suppression, window and attempt
         # checks. Repeated Beat deliveries cannot create another active intent.
         try:
             with db.begin_nested():
                 key = f'campaign:{person.id}:{at.astimezone(UK).date()}:{at.hour}'
-                queued.append(svc.request_call(db, person.id, key, at=at).id)
+                if person.scheduled_call_at:
+                    key = f"scheduled:{person.id}:{person.scheduled_call_at.isoformat()}"
+                queued.append(svc.request_call(db, person.id, key, at=at, from_scheduler=True).id)
                 if len(queued) >= budget:
                     break
         except Rejected:

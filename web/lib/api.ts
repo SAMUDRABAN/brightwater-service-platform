@@ -23,6 +23,7 @@ export type Customer = {
   suppressed: boolean;
   destination_approved: boolean;
   next_due: string | null;
+  scheduled_call_at: string | null;
   property_count: number;
 };
 export type Appointment = {
@@ -86,6 +87,7 @@ export type Dashboard = {
 export type CustomerDetail = Customer & {
   notes: string;
   destination_hint: string | null;
+  contact_phone: string | null;
   properties: {
     id: string;
     address: string;

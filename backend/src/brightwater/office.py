@@ -1,7 +1,8 @@
 """Staff CRM queries and audited follow-up work. Never dispatches telephone calls."""
 
-from datetime import time
+from datetime import date, datetime, time, timedelta
 from typing import Annotated, Literal
+from uuid import UUID
 
 from fastapi import Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,9 +10,10 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from brightwater import models as m
+from brightwater import services as svc
 from brightwater.db import get_db
 from brightwater.office_bookings import BookingUpdate
-from brightwater.policy import UK, Rejected, now
+from brightwater.policy import UK, Rejected, normalise_uk_phone, now
 
 DB = Annotated[Session, Depends(get_db, scope="function")]
 
@@ -28,6 +30,37 @@ class OutcomeReview(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     disposition: Literal["not_available", "wrong_number", "not_interested", "serviced_elsewhere", "voicemail"]
     note: str = Field(min_length=10, max_length=1500)
+
+
+class CustomerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    request_key: UUID
+    name: str = Field(min_length=2, max_length=160)
+    kind: Literal["homeowner", "landlord"]
+    address: str = Field(min_length=6, max_length=300)
+    notes: str = Field(default="", max_length=1500)
+    service: Literal["service", "cp12", "combined"] | None = None
+    due_date: date | None = None
+    phone: str = Field(default="", max_length=32)
+    consent_reference: str = Field(default="", max_length=300)
+
+
+class ReminderInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    property_id: str = Field(max_length=40)
+    service: Literal["service", "cp12", "combined"]
+    due_date: date
+
+
+class ScheduleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schedule_at: datetime | None
+
+
+def customer_audit(db, request, action, customer_id):
+    actor = getattr(request.state, "staff", None)
+    db.add(m.StaffAudit(username=actor.username if actor else "trusted_operator",
+                        action=f"{action}: {customer_id}"))
 
 
 class Preferences(BaseModel):
@@ -152,6 +185,70 @@ def install(app, operator):
             refresh_result(db, call, events, historical=True)
         return followup_row(db, value)
 
+    @app.post("/v1/office/customers", dependencies=auth, status_code=201)
+    def create_customer(body: CustomerInput, request: Request, db: DB):
+        svc.control_lock(db)
+        customer_id = "BW-C-" + body.request_key.hex
+        if db.get(m.Customer, customer_id):
+            return {"id": customer_id}
+        if bool(body.service) != bool(body.due_date):
+            raise Rejected("missing_reminder_details", "Choose a service and due date together", 422)
+        if body.consent_reference and (not body.phone or len(body.consent_reference) < 10):
+            raise Rejected("invalid_consent", "Supply a UK phone number and a consent reference of at least 10 characters", 422)
+        phone = normalise_uk_phone(body.phone) if body.phone else ""
+        db.add(m.Customer(id=customer_id, name=body.name, kind=body.kind, source_phone=phone, notes=body.notes))
+        db.flush()
+        property_id = m.uid()
+        db.add(m.Property(id=property_id, customer_id=customer_id, address=body.address))
+        db.flush()
+        if body.service:
+            db.add(m.Obligation(id=m.uid(), property_id=property_id, service=body.service, due_date=body.due_date))
+        if body.consent_reference:
+            svc.register_destination(db, customer_id, phone, body.consent_reference)
+        customer_audit(db, request, "Created customer", customer_id)
+        return {"id": customer_id}
+
+    @app.post("/v1/office/customers/{customer_id}/reminders", dependencies=auth, status_code=201)
+    def add_reminder(customer_id: str, body: ReminderInput, request: Request, db: DB):
+        svc.control_lock(db)
+        prop = db.get(m.Property, body.property_id)
+        if not customer_id.startswith("BW-") or not prop or prop.customer_id != customer_id:
+            raise Rejected("not_found", "Property not found on this customer record", 404)
+        existing = db.scalar(select(m.Obligation).where(m.Obligation.property_id == prop.id,
+            m.Obligation.service == body.service, m.Obligation.resolved.is_(False)).limit(1))
+        if existing:
+            if existing.due_date == body.due_date:
+                return {"id": existing.id}
+            raise Rejected("reminder_exists", "This property already has an outstanding reminder for that service")
+        record = m.Obligation(id=m.uid(), property_id=prop.id, service=body.service, due_date=body.due_date)
+        db.add(record)
+        db.flush()
+        customer_audit(db, request, "Added service reminder", customer_id)
+        return {"id": record.id}
+
+    @app.post("/v1/office/customers/{customer_id}/schedule", dependencies=auth)
+    def schedule_call(customer_id: str, body: ScheduleInput, request: Request, db: DB):
+        svc.control_lock(db)
+        person = svc.customer(db, customer_id)
+        if not customer_id.startswith("BW-"):
+            raise Rejected("not_found", "Customer not found", 404)
+        at = body.schedule_at
+        if at is not None:
+            if at.tzinfo is not None or at.second or at.microsecond:
+                raise Rejected("invalid_schedule", "Use a UK date and time in hours and minutes", 422)
+            at = at.replace(tzinfo=UK)
+            current = now()
+            if at <= current or at.date() > current.astimezone(UK).date() + timedelta(days=28):
+                raise Rejected("invalid_schedule", "Choose a future UK date within the next 28 days", 422)
+            if not db.scalar(select(m.Obligation.id).join(m.Property).where(
+                m.Property.customer_id == person.id, m.Obligation.resolved.is_(False)).limit(1)):
+                raise Rejected("no_reminder", "Add an outstanding service reminder before scheduling a call", 422)
+            destination = db.scalar(select(m.Destination).where(m.Destination.customer_id == person.id))
+            svc.check_dial_policy(db, person, destination, at, check_daily_limit=False)
+        person.scheduled_call_at = at
+        customer_audit(db, request, "Scheduled customer call" if at else "Removed scheduled call time", customer_id)
+        return {"id": customer_id, "scheduled_call_at": at}
+
     @app.get("/v1/office/customers/{customer_id}", dependencies=auth)
     def customer(customer_id: str, db: DB):
         person = db.get(m.Customer, customer_id)
@@ -205,6 +302,8 @@ def install(app, operator):
             "suppressed": suppressed,
             "destination_approved": bool(destination and destination.enabled),
             "destination_hint": ("Ending " + destination.phone[-4:]) if destination else None,
+            "contact_phone": person.source_phone if person.id.startswith("BW-C-") else None,
+            "scheduled_call_at": person.scheduled_call_at,
             "properties": [
                 {
                     "id": p.id,
@@ -229,6 +328,7 @@ def install(app, operator):
 
     @app.post("/v1/office/customers/{customer_id}/preferences", dependencies=auth)
     def preferences(customer_id: str, body: Preferences, request: Request, db: DB):
+        svc.control_lock(db)
         person = db.scalar(select(m.Customer).where(m.Customer.id == customer_id).with_for_update())
         if not person or not customer_id.startswith("BW-"):
             raise Rejected("not_found", "Customer not found", 404)

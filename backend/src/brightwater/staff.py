@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from brightwater import models as m
 from brightwater.config import settings
 from brightwater.db import get_db
-from brightwater.policy import Rejected, now
+from brightwater.policy import CUSTOMER_ID_PATTERN, Rejected, now
 
 router = APIRouter(prefix="/v1")
 DB = Annotated[Session, Depends(get_db, scope="function")]
@@ -28,11 +28,14 @@ def office_allowed(method, path):
     if method == "GET":
         if re.fullmatch(r"/v1/office/bookings/[a-f0-9-]{36}", path):
             return True
-        return path in ("/v1/campaign/status", "/v1/dashboard", "/v1/customers", "/v1/calls", "/v1/office/followups", "/v1/office/calls", "/v1/office/diary") or bool(re.fullmatch(r"/v1/office/customers/BW-[0-9]{4}", path)) or bool(re.fullmatch(r"/v1/calls/[a-f0-9-]{36}(/recording)?", path))
+        return path in ("/v1/campaign/status", "/v1/dashboard", "/v1/customers", "/v1/calls", "/v1/office/followups", "/v1/office/calls", "/v1/office/diary") or bool(re.fullmatch(rf"/v1/office/customers/{CUSTOMER_ID_PATTERN}", path)) or bool(re.fullmatch(r"/v1/calls/[a-f0-9-]{36}(/recording)?", path))
     if method == "POST":
         if re.fullmatch(r"/v1/office/(calls/[a-f0-9-]{36}/outcome|bookings/[a-f0-9-]{36})", path):
             return True
-        return path in ("/v1/calls", "/v1/control/pause") or bool(re.fullmatch(r"/v1/office/followups/[a-f0-9-]{36}", path)) or bool(re.fullmatch(r"/v1/office/customers/BW-[0-9]{4}/preferences", path)) or bool(re.fullmatch(r"/v1/customers/BW-[0-9]{4}/destination", path))
+        return (path in ("/v1/calls", "/v1/control/pause", "/v1/office/customers")
+                or bool(re.fullmatch(r"/v1/office/followups/[a-f0-9-]{36}", path))
+                or bool(re.fullmatch(rf"/v1/office/customers/{CUSTOMER_ID_PATTERN}/(preferences|schedule|reminders)", path))
+                or bool(re.fullmatch(rf"/v1/customers/{CUSTOMER_ID_PATTERN}/destination", path)))
     return False
 
 

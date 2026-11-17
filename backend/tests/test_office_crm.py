@@ -465,3 +465,81 @@ def test_call_results_keep_later_suppression_out_of_earlier_call(staff):
     rows = client.get("/v1/office/calls?outcome=technical_review", headers=headers("sarah")).json()["items"]
     assert [row["id"] for row in rows] == [call_id]
     assert rows[0]["outcome"] == "No answer" and rows[0]["outcome_review_required"]
+
+
+def test_office_can_create_customer_approve_number_and_schedule_without_dialling(staff, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from brightwater import office
+    from brightwater.campaign import enqueue_due
+
+    current = datetime(2026, 11, 17, 10, tzinfo=UTC)
+    monkeypatch.setattr(office, "now", lambda: current)
+    auth = headers("sarah")
+    payload = {"request_key": m.uid(), "name": "Example customer", "kind": "homeowner",
+               "address": "1 Fictional Street, Portsmouth, PO1 1AA", "phone": "07911 123456"}
+    assert client.post("/v1/office/customers", headers=headers("dan"), json=payload).status_code == 403
+    assert client.post("/v1/office/customers", headers=auth, json=payload | {
+        "request_key": m.uid(), "phone": "07700 900714", "consent_reference": "Test fixture",
+    }).json()["error"] == "fictional_destination"
+    response = client.post("/v1/office/customers", headers=auth, json=payload)
+    assert response.status_code == 201
+    cid = response.json()["id"]
+    assert client.post("/v1/office/customers", headers=auth, json=payload).json()["id"] == cid
+    path = "/v1/office/customers/" + cid
+    customer = client.get(path, headers=auth).json()
+    assert customer["contact_phone"] == "+447911123456"
+    assert not customer["destination_approved"] and len(customer["properties"]) == 1
+    assert client.post("/v1/customers/" + cid + "/destination", headers=auth, json={
+        "phone": "07911 123456", "consent_reference": "Offline customer consent; never dial",
+    }).status_code == 200
+    schedule = {"schedule_at": "2026-11-18T12:15"}
+    assert client.post(path + "/schedule", headers=auth, json=schedule).json()["error"] == "no_reminder"
+    reminder = {"property_id": customer["properties"][0]["id"], "service": "service", "due_date": "2026-12-28"}
+    assert client.post(path + "/reminders", headers=auth, json=reminder).status_code == 201
+    assert client.post(path + "/schedule", headers=auth, json={
+        "schedule_at": "2026-11-22T12:15",
+    }).json()["error"] == "outside_calling_window"
+    assert client.post(path + "/schedule", headers=auth, json=schedule).status_code == 200
+    assert client.get(path, headers=auth).json()["scheduled_call_at"].startswith("2026-11-18T12:15")
+    assert client.post(path + "/schedule", headers=auth, json={"schedule_at": None}).json()["scheduled_call_at"] is None
+    assert client.post(path + "/schedule", headers=auth, json=schedule).status_code == 200
+    appointment = datetime(2026, 11, 18, 12, 15, tzinfo=UTC)
+    with session() as db, db.begin():
+        assert not db.get(m.Control, "dialing").enabled
+        assert db.scalar(select(func.count()).select_from(m.Call)) == 0
+        assert enqueue_due(db, appointment - timedelta(seconds=1)) == []
+        queued = enqueue_due(db, appointment)
+        assert len(queued) == 1
+        call = db.get(m.Call, queued[0])
+        assert call.customer_id == cid and call.state == "queued" and call.request_key.startswith("scheduled:")
+        assert db.get(m.Customer, cid).scheduled_call_at is None
+        assert enqueue_due(db, appointment) == []
+        assert db.scalar(select(func.count()).select_from(m.Outbox)) == 1
+
+
+def test_existing_due_customer_waits_for_scheduled_time_and_rechecks_suppression(staff, monkeypatch):
+    from datetime import UTC, datetime
+
+    from brightwater import office
+    from brightwater import services as svc
+    from brightwater.campaign import enqueue_due
+    from brightwater.policy import Rejected
+
+    at = datetime(2026, 11, 17, 11, tzinfo=UTC)
+    monkeypatch.setattr(office, "now", lambda: at)
+    cid = "BW-1107"
+    phone = "+447911123456"
+    with session() as db, db.begin():
+        svc.register_destination(db, cid, phone, "Offline consent record; never dial")
+    response = client.post("/v1/office/customers/" + cid + "/schedule", headers=headers("sarah"),
+                           json={"schedule_at": "2026-11-18T12:15"})
+    assert response.status_code == 200
+    with session() as db, db.begin():
+        assert enqueue_due(db, at) == []
+        with pytest.raises(Rejected, match="Cancel or change"):
+            svc.request_call(db, cid, "manual-request", at=at)
+        db.add(m.Suppression(phone=phone, evidence="Test opt-out"))
+        db.flush()
+        assert enqueue_due(db, datetime(2026, 11, 18, 12, 15, tzinfo=UTC)) == []
+        assert db.scalar(select(func.count()).select_from(m.Outbox)) == 0

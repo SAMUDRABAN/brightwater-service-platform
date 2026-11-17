@@ -127,12 +127,16 @@ def customers(db: DB):
              "contact_blocked": c.contact_blocked,
              "suppressed": any(x.customer_id == c.id or x.phone in {c.source_phone, destinations[c.id].phone if c.id in destinations else ""} for x in suppressions),
              "destination_approved": bool(c.id in destinations and destinations[c.id].enabled),
-             "next_due": due.get(c.id), "property_count": properties.get(c.id, 0)} for c in values]
+             "scheduled_call_at": c.scheduled_call_at, "next_due": due.get(c.id), "property_count": properties.get(c.id, 0)} for c in values]
 
 
 @app.post("/v1/customers/{customer_id}/destination", dependencies=OPERATOR)
-def destination(customer_id: str, body: s.DestinationInput, db: DB):
+def destination(customer_id: str, body: s.DestinationInput, request: Request, db: DB):
     value = svc.register_destination(db, customer_id, body.phone, body.consent_reference)
+    if customer_id.startswith("BW-C-"):
+        svc.customer(db, customer_id).source_phone = value.phone
+    principal = getattr(request.state, "staff", None)
+    staff.audit(db, principal.username if principal else "trusted_operator", "Approved calling number: " + customer_id)
     return {"id": value.id, "enabled": value.enabled}
 
 

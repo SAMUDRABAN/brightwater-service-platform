@@ -39,6 +39,7 @@ class Customer(Base):
     not_before: Mapped[time | None] = mapped_column(Time)
     notes: Mapped[str] = mapped_column(Text, default="")
     contact_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    scheduled_call_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Property(Base):

@@ -37,8 +37,10 @@ def lab_engine():
 
 
 def create_evaluation(db, customer_id):
+    from brightwater.seed import CUSTOMERS
+
     customer = db.get(m.Customer, customer_id)
-    if not customer or customer_id.startswith("ENGINEERING-"):
+    if not customer or not any(fixture[0] == customer_id for fixture in CUSTOMERS):
         raise Rejected("not_found", "Choose an assessment fixture", 404)
     if db.scalar(select(m.Call.id).where(m.Call.state == "in_progress")):
         raise Rejected("managed_busy", "Finish the active evaluation first")

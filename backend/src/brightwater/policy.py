@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 UK = ZoneInfo("Europe/London")
+CUSTOMER_ID_PATTERN = r"BW-(?:[0-9]{4}|C-[a-f0-9]{32})"
 SERVICES = {
     "service": {"name": "Boiler service", "price_pence": 9500, "minutes": 60},
     "cp12": {"name": "Landlord gas safety certificate", "price_pence": 7500, "minutes": 60},
@@ -32,6 +33,15 @@ class Rejected(Exception):
 
 def now() -> datetime:
     return datetime.now(UTC)
+
+
+def normalise_uk_phone(value: str) -> str:
+    value = re.sub(r"[\s()-]", "", value)
+    if value.startswith("0044"):
+        value = "+" + value[2:]
+    elif value.startswith("0"):
+        value = "+44" + value[1:]
+    return uk_phone(value)
 
 
 def uk_phone(value: str) -> str:

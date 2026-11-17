@@ -50,7 +50,9 @@ export default async function ManagedPage() {
         </p>
         <ManagedConversation
           enabled={enabled}
-          customers={customers.map((c) => ({ id: c.id, name: c.name }))}
+          customers={customers
+            .filter((c) => /^BW-[0-9]{4}$/.test(c.id))
+            .map((c) => ({ id: c.id, name: c.name }))}
         />
       </section>
       <section className="panel">

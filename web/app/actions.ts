@@ -3,6 +3,7 @@
 import { staffToken } from "../lib/staff";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { customerIdPattern } from "../lib/customer-id";
 import { followupHref } from "../lib/office-navigation";
 
 const messages: Record<string, string> = {
@@ -10,7 +11,7 @@ const messages: Record<string, string> = {
   kill_switch: "New calls are paused.",
   suppressed: "This customer or number is suppressed. No call was queued.",
   fictional_destination: "Assessment sample numbers cannot be approved for calling.",
-  invalid_destination: "Enter an owned or consented UK number in international format.",
+  invalid_destination: "Enter a valid UK telephone number.",
 };
 
 async function post(
@@ -47,17 +48,79 @@ function value(form: FormData, name: string): string {
   return typeof item === "string" ? item.trim() : "";
 }
 
+export async function createCustomer(form: FormData) {
+  const key = value(form, "request_key");
+  if (!/^[a-f0-9-]{36}$/.test(key)) redirect("/customers/new?notice=Invalid%20request");
+  const error = await post(
+    "/v1/office/customers",
+    {
+      request_key: key,
+      name: value(form, "name"),
+      kind: value(form, "kind"),
+      address: value(form, "address"),
+      phone: value(form, "phone"),
+      consent_reference: value(form, "consent_reference"),
+      service: value(form, "service") || null,
+      due_date: value(form, "due_date") || null,
+      notes: value(form, "notes"),
+    },
+    true,
+  );
+  if (error) redirect(`/customers/new?notice=${encodeURIComponent(error)}`);
+  revalidatePath("/customers");
+  redirect(`/customers/BW-C-${key.replaceAll("-", "")}?notice=Customer%20saved`);
+}
+
 export async function approveDestination(form: FormData) {
   const customerId = value(form, "customer_id");
-  if (!/^BW-\d{4}$/.test(customerId)) redirect("/customers?notice=invalid");
-  const error = await post(`/v1/customers/${customerId}/destination`, {
-    phone: value(form, "phone"),
-    consent_reference: value(form, "consent_reference"),
-  });
+  if (!customerIdPattern.test(customerId)) redirect("/customers?notice=Invalid%20customer");
+  const error = await post(
+    `/v1/customers/${customerId}/destination`,
+    {
+      phone: value(form, "phone"),
+      consent_reference: value(form, "consent_reference"),
+    },
+    true,
+  );
   revalidatePath("/customers");
   redirect(
-    `/customers?notice=${encodeURIComponent(error || "Consented destination saved. Calling checks still apply.")}`,
+    `/customers/${customerId}?notice=${encodeURIComponent(error || "Calling number saved.")}#approved-number`,
   );
+}
+
+export async function addCustomerReminder(form: FormData) {
+  const customerId = value(form, "customer_id");
+  if (!customerIdPattern.test(customerId)) redirect("/customers?notice=Invalid%20customer");
+  const error = await post(
+    `/v1/office/customers/${customerId}/reminders`,
+    {
+      property_id: value(form, "property_id"),
+      service: value(form, "service"),
+      due_date: value(form, "due_date"),
+    },
+    true,
+  );
+  revalidatePath("/customers");
+  redirect(
+    `/customers/${customerId}?notice=${encodeURIComponent(error || "Service reminder saved.")}#reminders`,
+  );
+}
+
+export async function scheduleCustomerCall(form: FormData) {
+  const customerId = value(form, "customer_id");
+  if (!customerIdPattern.test(customerId)) redirect("/customers?notice=Invalid%20customer");
+  const remove = value(form, "mode") === "remove";
+  const time = value(form, "schedule_at");
+  const error = await post(
+    `/v1/office/customers/${customerId}/schedule`,
+    {
+      schedule_at: remove ? null : time,
+    },
+    true,
+  );
+  revalidatePath("/customers");
+  const message = error || (remove ? "Scheduled time removed." : "Call schedule saved.");
+  redirect(`/customers/${customerId}?notice=${encodeURIComponent(message)}#call-schedule`);
 }
 
 export async function requestCall(form: FormData) {
@@ -211,7 +274,7 @@ export async function updateBooking(form: FormData) {
 }
 export async function updatePreferences(form: FormData) {
   const id = value(form, "customer_id");
-  if (!/^BW-\d{4}$/.test(id)) redirect("/customers");
+  if (!customerIdPattern.test(id)) redirect("/customers");
   const error = await post(`/v1/office/customers/${id}/preferences`, {
     not_before: value(form, "not_before") || null,
   });

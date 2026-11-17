@@ -9,7 +9,8 @@ class Strict(BaseModel):
 
 
 class DestinationInput(Strict):
-    phone: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+    phone: str = Field(min_length=6, max_length=32)
     consent_reference: str = Field(min_length=10, max_length=300)
 
 

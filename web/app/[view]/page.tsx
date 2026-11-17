@@ -11,9 +11,9 @@ import {
   type DiaryWindow,
   type Followup,
 } from "../../lib/api";
-import { arrivalWindow, bookingTestLabel, gbDate } from "../../lib/format";
+import { arrivalWindow, bookingTestLabel, gbDate, gbTime } from "../../lib/format";
 import { callScope, callScopes, followupHref, weekStart } from "../../lib/office-navigation";
-import { pauseCalling, requestCall, requestEngineeringCall, requestUKTestCall } from "../actions";
+import { pauseCalling, requestEngineeringCall, requestUKTestCall } from "../actions";
 import { BookingTable, CallTable, FollowupList } from "../../components/Records";
 import { Empty, ErrorState, PageHeading, PanelHeading, Status } from "../../components/Ui";
 import { Icon } from "../../components/Icon";
@@ -97,33 +97,21 @@ function CallingStatus({ enabled }: { enabled: boolean }) {
     </Status>
   );
 }
-function CustomerActions({ customer: c, enabled }: { customer: Customer; enabled: boolean }) {
-  if (c.suppressed) return <Status>Do not call</Status>;
-  if (c.contact_blocked) return <span className="muted">Record needs correction</span>;
+function CustomerActions({ customer: c }: { customer: Customer }) {
   return (
-    <div className="customer-actions">
-      <form action={requestCall}>
-        <input type="hidden" name="customer_id" value={c.id} />
-        <input type="hidden" name="request_key" value={`office:${c.id}:${randomUUID()}`} />
-        <button
-          className="button secondary small"
-          disabled={!enabled || !c.destination_approved}
-          title={
-            !enabled
-              ? "Campaign calling is paused"
-              : !c.destination_approved
-                ? "Approve an owned or consented UK destination first"
-                : "Queue one call"
-          }
-        >
-          <Icon name="phone" size={14} />
-          Call customer
-        </button>
-      </form>
-    </div>
+    <Link
+      href={`/customers/${c.id}${c.suppressed || c.contact_blocked ? "" : c.destination_approved ? "#call-schedule" : "#approved-number"}`}
+      className="button secondary small"
+    >
+      {c.suppressed || c.contact_blocked
+        ? "View customer"
+        : c.destination_approved
+          ? "Manage calls"
+          : "Add calling number"}
+    </Link>
   );
 }
-async function Customers({ data, p }: { data: Dashboard; p: Search }) {
+async function Customers({ p }: { p: Search }) {
   const rows = await api<Customer[]>("/v1/customers");
   const search = q(p, "q").toLocaleLowerCase("en-GB");
   const kind = q(p, "kind");
@@ -146,7 +134,9 @@ async function Customers({ data, p }: { data: Dashboard; p: Search }) {
       </Filters>
       <section className="panel">
         <PanelHeading title="Customer directory" count={items.length}>
-          <span className="muted">{rows.length} records in this workspace</span>
+          <Link href="/customers/new" className="button small">
+            Add customer
+          </Link>
         </PanelHeading>
         {items.length ? (
           <div className="table-wrap" tabIndex={0} role="region" aria-label="Customer directory">
@@ -203,7 +193,13 @@ async function Customers({ data, p }: { data: Dashboard; p: Search }) {
                       </Status>
                     </td>
                     <td>
-                      <CustomerActions customer={c} enabled={data.dialing_enabled} />
+                      <CustomerActions customer={c} />
+                      {c.scheduled_call_at && (
+                        <p className="muted">
+                          Scheduled {gbDate(c.scheduled_call_at)} at {gbTime(c.scheduled_call_at)}{" "}
+                          UK
+                        </p>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -929,7 +925,7 @@ export default async function View({
         </>
       );
     } else if (view === "callbacks") body = await Followups({ p });
-    else if (view === "customers") body = await Customers({ data, p });
+    else if (view === "customers") body = await Customers({ p });
     else if (view === "calls") body = await Calls({ p });
     else if (view === "bookings") body = await Diary({ data, p });
     else if (view === "quality") body = <Quality />;
