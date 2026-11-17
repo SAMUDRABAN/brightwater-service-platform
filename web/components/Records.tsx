@@ -15,6 +15,27 @@ import {
 import { updateFollowup } from "../app/actions";
 import { Icon } from "./Icon";
 import { Empty, PanelHeading, Status } from "./Ui";
+function FollowupDescription({ followup }: { followup: Followup }) {
+  const [request, conversation] = followup.detail.split(
+    "\nRecent conversation (quoted, not booking confirmation):\n",
+    2,
+  );
+  return (
+    <>
+      {request && request !== followup.summary && (
+        <p style={{ whiteSpace: "pre-line" }}>{request}</p>
+      )}
+      {followup.summary && <p>{followup.summary}</p>}
+      {conversation && (
+        <details className="followup-edit">
+          <summary>Recent conversation</summary>
+          <p style={{ whiteSpace: "pre-line" }}>{conversation}</p>
+        </details>
+      )}
+    </>
+  );
+}
+
 export function FollowupList({
   items,
   compact = false,
@@ -73,13 +94,7 @@ export function FollowupList({
                 <h3>
                   <Link href={`/calls/${f.call_id}`}>{f.customer_name}</Link>
                 </h3>
-                <p>{f.summary || f.detail}</p>
-                {f.detail && f.detail !== f.summary && (
-                  <details className="followup-edit">
-                    <summary>Follow-up details</summary>
-                    <p style={{ whiteSpace: "pre-line" }}>{f.detail}</p>
-                  </details>
-                )}
+                <FollowupDescription followup={f} />
                 <div className="record-meta">
                   <span>For {f.owner}</span>
                   {f.created_at && <span>{gbDate(f.created_at)}</span>}
