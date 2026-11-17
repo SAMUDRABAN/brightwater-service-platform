@@ -36,7 +36,8 @@ def now() -> datetime:
 
 
 def normalise_uk_phone(value: str) -> str:
-    value = re.sub(r"[\s()-]", "", value)
+    # Contacts copied from messaging apps can carry invisible direction or zero-width marks.
+    value = re.sub(r"[\s().\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff-]", "", value)
     if value.startswith("0044"):
         value = "+" + value[2:]
     elif value.startswith("0"):
@@ -45,7 +46,7 @@ def normalise_uk_phone(value: str) -> str:
 
 
 def uk_phone(value: str) -> str:
-    if not re.fullmatch(r"\+44[1-9]\d{8,9}", value):
+    if not re.fullmatch(r"\+44[1-9][0-9]{8,9}", value):
         raise Rejected("invalid_destination", "Use a consented UK number in E.164 format", 422)
     if value.startswith(("+447700900", "+441632960")):
         raise Rejected("fictional_destination", "Assessment drama numbers cannot be dialled", 422)

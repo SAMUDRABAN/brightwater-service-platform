@@ -1,7 +1,6 @@
 """One operator-initiated UK assessment call, separate from the campaign queue."""
 
 import hashlib
-import re
 import secrets
 from datetime import date, timedelta
 
@@ -9,7 +8,7 @@ from sqlalchemy import func, select
 
 from brightwater import models as m
 from brightwater import services as svc
-from brightwater.policy import UK, Rejected, now, uk_phone
+from brightwater.policy import UK, Rejected, normalise_uk_phone, now
 from brightwater.seed import CUSTOMERS
 
 UK_TEST_BAND = "uk_test"
@@ -31,20 +30,18 @@ def available(db, cfg):
             and (control is None or control.enabled))
 
 
-def normalise_phone(value):
-    cleaned = re.sub(r"[\s().-]", "", value)
-    if cleaned.startswith("0044"):
-        cleaned = "+" + cleaned[2:]
-    elif cleaned.startswith("0"):
-        cleaned = "+44" + cleaned[1:]
-    return uk_phone(cleaned)
+def remaining_today(db, cfg, at):
+    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
+    used = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.time_band == UK_TEST_BAND,
+        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1)))
+    return max(0, cfg.uk_test_daily_limit - used)
 
 
 def prepare(db, cfg, body):
     svc.control_lock(db)
     if not available(db, cfg):
         raise Rejected("uk_test_disabled", "The UK test route is paused or unavailable")
-    number = normalise_phone(body.phone.get_secret_value())
+    number = normalise_uk_phone(body.phone.get_secret_value())
     if number == cfg.uk_test_caller_id.get_secret_value():
         raise Rejected("invalid_destination", "Enter the recipient’s number rather than Alex’s caller ID", 422)
     if not body.consent:
@@ -65,10 +62,7 @@ def prepare(db, cfg, body):
         raise Rejected("suppressed", "The recipient opted out")
     if db.scalar(select(m.Call.id).where(m.Call.state.in_(svc.ACTIVE)).limit(1)):
         raise Rejected("call_in_progress", "Resolve the current call before another test")
-    start = at.astimezone(UK).replace(hour=0, minute=0, second=0, microsecond=0)
-    used = db.scalar(select(func.count()).select_from(m.Call).where(m.Call.time_band == UK_TEST_BAND,
-        m.Call.dispatched_at >= start, m.Call.dispatched_at < start + timedelta(days=1)))
-    if used >= cfg.uk_test_daily_limit:
+    if remaining_today(db, cfg, at) == 0:
         raise Rejected("uk_test_limit", "Today’s UK test allowance has been used")
 
     customer = m.Customer(id=UK_TEST_PREFIX + template_id + "-" + m.uid()[:10], name=name,

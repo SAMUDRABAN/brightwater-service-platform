@@ -10,9 +10,9 @@ from brightwater import models as m
 from brightwater.api import app
 from brightwater.config import settings
 from brightwater.db import session
-from brightwater.policy import Rejected
+from brightwater.policy import Rejected, normalise_uk_phone
 from brightwater.schemas import UKTestInput
-from brightwater.uk_test import is_uk_test, normalise_phone, prepare
+from brightwater.uk_test import is_uk_test, prepare
 
 RECIPIENT = "+442079460123"
 
@@ -49,7 +49,7 @@ def test_uk_test_admission_is_idempotent_and_never_enables_campaign(enabled_pilo
     at = datetime(2026, 11, 11, hour, tzinfo=UTC)
     monkeypatch.setattr("brightwater.uk_test.now", lambda: at)
     monkeypatch.setattr("brightwater.api.now", lambda: at)
-    body = payload(customer_id=customer_id)
+    body = payload(customer_id=customer_id, phone="\u202a+44\u00a020\u202f7946 0123\u202c")
     with session() as db, db.begin():
         call, token = prepare(db, cfg, body)
         assert is_uk_test(call)
@@ -64,6 +64,9 @@ def test_uk_test_admission_is_idempotent_and_never_enables_campaign(enabled_pilo
     path = "/internal/campaign/admission"
     request = {"call_id": call_id, "session_token": token, "phone": RECIPIENT}
     assert client.post(path, json=request).status_code == 401
+    status = client.get("/v1/uk-tests/status",
+                        headers={"Authorization": "Bearer " + cfg.operator_token.get_secret_value()})
+    assert status.json()["remaining_today"] == cfg.uk_test_daily_limit - 1
     headers = {"Authorization": "Bearer " + cfg.runtime_token.get_secret_value()}
     assert client.post(path, headers=headers, json=request).status_code == 200
     assert client.post(path, headers=headers, json=request | {"phone": "+442079460125"}).status_code == 403
@@ -74,7 +77,8 @@ def test_uk_test_admission_is_idempotent_and_never_enables_campaign(enabled_pilo
 
 @pytest.mark.parametrize("updates,code", [
     ({"consent": False}, "consent_required"),
-    ({"phone": "+447700900123"}, "fictional_destination"),
+    ({"phone": "\u202a+44 7700 900123\u202c"}, "fictional_destination"),
+    ({"phone": "+44 20 7946 012x"}, "invalid_destination"),
     ({"phone": "+442079460124"}, "invalid_destination"),
     ({"phone": "+919876543210"}, "invalid_destination"),
 ])
@@ -91,4 +95,4 @@ def test_uk_test_honours_global_suppression(enabled_pilot):
         with pytest.raises(Rejected) as error:
             prepare(db, enabled_pilot, payload())
         assert error.value.code == "suppressed"
-    assert normalise_phone("0044 (20) 7946-0123") == RECIPIENT
+    assert normalise_uk_phone("0044 (20) 7946-0123") == RECIPIENT

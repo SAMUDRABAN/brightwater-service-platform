@@ -214,15 +214,17 @@ async def engineering_call(body: s.EngineeringCallInput, background_tasks: Backg
 @app.get("/v1/uk-tests/status", dependencies=OPERATOR)
 def uk_test_status(db: DB):
     from brightwater.seed import CUSTOMERS
-    from brightwater.uk_test import available
+    from brightwater.uk_test import available, remaining_today
 
-    return {"enabled": available(db, settings()),
+    cfg = settings()
+    return {"enabled": available(db, cfg), "remaining_today": remaining_today(db, cfg, now()),
             "fixtures": [{"id": row[0], "name": row[1]} for row in CUSTOMERS]}
 
 
 @app.post("/v1/uk-tests", dependencies=OPERATOR, status_code=202)
 async def uk_test_call(body: s.UKTestInput, background_tasks: BackgroundTasks):
-    from brightwater.uk_test import UK_TEST_SECONDS, available, normalise_phone, prepare
+    from brightwater.policy import normalise_uk_phone
+    from brightwater.uk_test import UK_TEST_SECONDS, available, prepare
 
     cfg = settings()
     with session() as db:
@@ -247,7 +249,7 @@ async def uk_test_call(body: s.UKTestInput, background_tasks: BackgroundTasks):
             response = await client.post(cfg.campaign_gateway_url.rstrip("/") + "/v1/outbound",
                 headers={"Authorization": "Bearer " + cfg.campaign_gateway_token.get_secret_value()},
                 json={"call_id": call_id, "session_token": token, "purpose": "campaign",
-                      "phone": normalise_phone(body.phone.get_secret_value()), "max_seconds": UK_TEST_SECONDS})
+                      "phone": normalise_uk_phone(body.phone.get_secret_value()), "max_seconds": UK_TEST_SECONDS})
             response.raise_for_status()
             provider_id = response.json()["request_uuid"]
         with session() as db, db.begin():

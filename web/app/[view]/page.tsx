@@ -624,9 +624,11 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
     blockers: string[];
   }>("/v1/campaign/status");
   const ukTest = admin
-    ? await api<{ enabled: boolean; fixtures: { id: string; name: string }[] }>(
-        "/v1/uk-tests/status",
-      )
+    ? await api<{
+        enabled: boolean;
+        remaining_today: number;
+        fixtures: { id: string; name: string }[];
+      }>("/v1/uk-tests/status")
     : null;
   const engineering = admin
     ? await api<{
@@ -706,7 +708,18 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
               Choose the fictional customer the recipient will play. The call and its outcome are
               saved in Calls.
             </p>
-            {!ukTest.enabled && <p role="status">The UK test route is paused or unavailable.</p>}
+            {!ukTest.enabled ? (
+              <p role="status">The UK test route is paused or unavailable.</p>
+            ) : ukTest.remaining_today === 0 ? (
+              <p role="status">
+                Today’s UK test allowance has been used. It resets at midnight UK time.
+              </p>
+            ) : (
+              <small>
+                {ukTest.remaining_today} UK test {ukTest.remaining_today === 1 ? "call" : "calls"}{" "}
+                remaining today.
+              </small>
+            )}
             <form action={requestUKTestCall} className="controls">
               <input type="hidden" name="request_key" value={randomUUID()} />
               <label htmlFor="uk-test-customer">Fictional customer</label>
@@ -726,7 +739,7 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
                 type="tel"
                 name="phone"
                 autoComplete="off"
-                maxLength={25}
+                maxLength={32}
                 placeholder="+44 or 07…"
                 required
               />
@@ -734,7 +747,11 @@ async function Controls({ data, admin }: { data: Dashboard; admin: boolean }) {
                 <input type="checkbox" name="consent" required /> The recipient has agreed to this
                 recorded test call.
               </label>
-              <button className="button" type="submit" disabled={!ukTest.enabled}>
+              <button
+                className="button"
+                type="submit"
+                disabled={!ukTest.enabled || ukTest.remaining_today === 0}
+              >
                 <Icon name="phone" size={16} />
                 Place UK test call
               </button>
