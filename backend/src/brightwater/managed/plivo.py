@@ -17,6 +17,7 @@ from livekit import rtc
 from livekit.agents import vad
 from livekit.plugins import silero
 from websockets.asyncio.client import connect
+from websockets.protocol import State
 
 from brightwater.call_limits import ATTENDED_CALL_MAX_SECONDS
 from brightwater.managed.readback import compact
@@ -444,22 +445,57 @@ class ProviderSocket:
             yield json.loads(message)
 
 
-async def run_managed_phone(app, context, cfg, transport, event):
+def managed_socket(url, *, open_timeout=15):
+    endpoint = urlparse(url)
+    if (endpoint.scheme != "wss" or endpoint.hostname != "api.elevenlabs.io"
+            or endpoint.path != "/v1/convai/conversation" or endpoint.username
+            or endpoint.password or endpoint.port not in (None, 443)):
+        raise ValueError("Unexpected managed provider endpoint")
+    return connect(url, max_size=2_000_000, open_timeout=open_timeout, close_timeout=2)
+
+
+def runtime_headers(context, cfg):
+    return {"Authorization": "Bearer " + context["session_token"],
+            "X-Brightwater-Runtime": cfg.runtime_token.get_secret_value()}
+
+
+async def preconnect_managed_phone(app, context, cfg, stack):
+    """Open a call-scoped socket without starting a conversation or sending audio."""
+    timing = context["startup_timing"]
+    timing["provider_preconnect_at"] = time.time()
+    response = await app.state.http.post(cfg.api_url + "/runtime/managed/preconnect",
+        headers=runtime_headers(context, cfg), timeout=5)
+    response.raise_for_status()
+    socket = await stack.enter_async_context(managed_socket(response.json()["signed_url"], open_timeout=5))
+    timing["provider_socket_ready_at"] = time.time()
+    return socket
+
+
+async def run_managed_phone(app, context, cfg, transport, event, *, preconnected=None):
     timing = context.setdefault("startup_timing", {})
+    if preconnected is not None and (
+        not context.get("recording_id") or "connected_audit_completed_at" not in timing
+    ):
+        raise ValueError("Recording and connected audit must be confirmed before conversation initiation")
+    if preconnected is not None and preconnected.state != State.OPEN:
+        preconnected = None
     timing["managed_session_request_at"] = time.time()
-    response = await app.state.http.post(cfg.api_url + "/runtime/managed/session",
-        headers={"Authorization": "Bearer " + context["session_token"],
-                 "X-Brightwater-Runtime": cfg.runtime_token.get_secret_value()}, timeout=20)
+    # Business authority is minted only through the existing active-call endpoint.
+    request = cfg.api_url + "/runtime/managed/session"
+    if preconnected is not None:
+        request += "?preconnected=true"
+    response = await app.state.http.post(request, headers=runtime_headers(context, cfg), timeout=20)
     response.raise_for_status()
     details = response.json()
     timing["managed_session_ready_at"] = time.time()
-    url = urlparse(details["signed_url"])
-    if url.scheme != "wss" or url.hostname != "api.elevenlabs.io" or url.path != "/v1/convai/conversation":
-        raise ValueError("Unexpected managed provider endpoint")
     async def emit(kind, payload, **kwargs):
         await event(context, kind, payload, **kwargs)
-    async with connect(details["signed_url"], max_size=2_000_000, open_timeout=15) as socket:
-        timing["provider_socket_ready_at"] = time.time()
+    async with contextlib.AsyncExitStack() as stack:
+        socket = preconnected
+        if socket is None:
+            socket = await stack.enter_async_context(managed_socket(details["signed_url"]))
+            timing["provider_socket_ready_at"] = time.time()
+        timing["conversation_initiation_at"] = time.time()
         provider = ProviderSocket(socket)
         await provider.send_json({"type": "conversation_initiation_client_data",
             "dynamic_variables": {"customer_name": details["customer_name"], "secret__session_token": details["token"]},

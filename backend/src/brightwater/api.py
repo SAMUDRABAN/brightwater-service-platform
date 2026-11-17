@@ -54,15 +54,23 @@ def runtime(authorization: Annotated[str | None, Header()] = None):
         raise Rejected("unauthorised", "Trusted runtime authentication required", 401)
 
 
-def scoped_call(db: DB, authorization: Annotated[str | None, Header()] = None):
+def call_for_token(db, authorization, *, states):
     if not authorization or not authorization.startswith("Bearer "):
         raise Rejected("unauthorised", "Call-scoped credential required", 401)
     digest = hashlib.sha256(authorization[7:].encode()).hexdigest()
     call = db.scalar(select(m.Call).where(m.Call.session_token_hash == digest))
     max_age = ATTENDED_SESSION_TTL_SECONDS if call and call.purpose == "engineering" else 3600
-    if not call or call.state != "in_progress" or now() - call.created_at > timedelta(seconds=max_age):
+    if not call or call.state not in states or now() - call.created_at > timedelta(seconds=max_age):
         raise Rejected("unauthorised", "Call session is absent, expired or closed", 401)
     return call
+
+
+def scoped_call(db: DB, authorization: Annotated[str | None, Header()] = None):
+    return call_for_token(db, authorization, states={"in_progress"})
+
+
+def startup_call(db: DB, authorization: Annotated[str | None, Header()] = None):
+    return call_for_token(db, authorization, states={"dispatching", "in_progress"})
 
 
 CALL = Annotated[m.Call, Depends(scoped_call)]
@@ -490,7 +498,7 @@ def recording(call_id: str, db: DB):
 # Private managed candidate uses an isolated evaluation diary, never phone dispatch.
 from brightwater.managed.gateway import install as install_managed  # noqa: E402
 
-install_managed(app, operator, scoped_call)
+install_managed(app, operator, scoped_call, startup_call)
 
 
 from brightwater.office import install as install_office  # noqa: E402

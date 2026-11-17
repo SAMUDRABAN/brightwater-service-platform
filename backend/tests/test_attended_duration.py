@@ -135,7 +135,7 @@ def test_phone_tool_capability_and_lease_outlive_the_attended_duration(monkeypat
         def __exit__(self, *args):
             pass
         def get(self, url, **kwargs):
-            return httpx.Response(200, request=httpx.Request("GET", url), json={"signed_url": "wss://api.elevenlabs.io/fixture"})
+            return httpx.Response(200, request=httpx.Request("GET", url), json={"signed_url": "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=fixture-phone&token=fixture"})
     broker = Broker()
     monkeypatch.setattr(gateway, "broker", lambda: broker)
     monkeypatch.setattr(gateway.httpx, "Client", Provider)
