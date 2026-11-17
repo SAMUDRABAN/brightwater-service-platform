@@ -26,7 +26,15 @@ TOOL_DEFINITIONS["check_availability"][1].update({
 })
 
 
-def tools(base_url=None, secret_id=None, *, phone=False, profile="balanced"):
+UK_DIARY_PROMPT = (
+    "Before each necessary check_availability lookup, say one short acknowledgement such as ‘I’ll check the diary.’ "
+    "Say it only once for the current request. After the tool returns, start directly with the result. "
+    "When the caller asks for a different date, window or engineer, look up that preference before saying it is unavailable. "
+    "Earlier offers cannot rule out a newly requested date."
+)
+
+
+def tools(base_url=None, secret_id=None, *, phone=False, profile="balanced", campaign=False):
     def describe(value):
         if isinstance(value, dict):
             if "type" in value:
@@ -42,8 +50,13 @@ def tools(base_url=None, secret_id=None, *, phone=False, profile="balanced"):
     for name, (description, parameters) in TOOL_DEFINITIONS.items():
         arguments = {"type": "object", "description": "Business operation arguments", "properties": parameters, "required": [p for p in parameters if p not in OPTIONAL_ARGUMENTS.get(name, set())]}
         if base_url and secret_id:
+            pre_tool_speech = "off"
+            if name == "record_followup" or (
+                name == "check_availability" and profile != "baseline" and (campaign or not phone)
+            ):
+                pre_tool_speech = "force"
             result.append({"type": "webhook", "name": name, "description": description,
-                "response_timeout_secs": 10, "pre_tool_speech": "force" if name == "record_followup" or (not phone and profile != "baseline" and name == "check_availability") else "off", "interruption_mode": "allow",
+                "response_timeout_secs": 10, "pre_tool_speech": pre_tool_speech, "interruption_mode": "allow",
                 "api_schema": {"url": base_url + "/v1/managed/tools/" + name, "method": "POST",
                     "request_headers": {"X-Brightwater-Provider": {"secret_id": secret_id},
                         "X-Brightwater-Session": {"variable_name": "secret__session_token"},
@@ -67,11 +80,12 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
     if phone:
         start = prompt.index("For an availability lookup,")
         stop = prompt.index(" Never say saving", start)
-        prompt = prompt[:start] + (
+        diary_prompt = UK_DIARY_PROMPT if campaign and profile != "baseline" else (
             "Call check_availability immediately after the caller agrees to look for times. "
             "Skip the diary preamble. Start your next spoken reply with the actual options "
             "or the reason no slots match."
-        ) + prompt[stop:]
+        )
+        prompt = prompt[:start] + diary_prompt + prompt[stop:]
         start = prompt.index("When you hear a real voicemail")
         stop = prompt.index(" For a current keypad menu", start)
         prompt = prompt[:start] + (
@@ -96,7 +110,7 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
                       "disable_first_message_interruptions": False,
                       "dynamic_variables": {"dynamic_variable_placeholders": {"customer_name": "Helen Price"}},
                       "prompt": {"prompt": prompt, "llm": "gpt-4.1", "temperature": 0.4, "max_tokens": 300,
-                                 "ignore_default_personality": True, "enable_parallel_tool_calls": False, "tools": [*tools(base_url, secret_id, phone=phone, profile=profile),
+                                 "ignore_default_personality": True, "enable_parallel_tool_calls": False, "tools": [*tools(base_url, secret_id, phone=phone, profile=profile, campaign=campaign),
                                      {"type": "system", "name": "end_call",
                                       "description": "End after the brief truthful closing for a completed task, caller goodbye, annual-service refusal or work serviced elsewhere. For an explicit refusal/serviced-elsewhere closing, a failed finish_conversation must not cause another offer or repeated write. Voicemail or automated greetings are never a caller goodbye. Call finish_conversation first and require stopped=true or finished=true. Speak any approved_message before end_call. Never end a proxy call before recording unavailability with finish_conversation. For misuse, first use finish_conversation and require stopped=true or finished=true. Never end for a complaint, service frustration, isolated swearing, assistive speech or uncertainty; finished=false means continue. Give one polite generic goodbye, with no account disclosure or invented callback." + (" Never invoke this tool for voicemail or an opt-out. The phone gateway owns those closings." if phone else ""),
                                       "params": {"system_tool_type": "end_call"}}],
@@ -108,7 +122,7 @@ def config(knowledge_id=None, base_url=None, secret_id=None, *, phone=False, qua
             "asr": {"provider": "scribe_realtime", "quality": "high", "user_input_audio_format": "pcm_16000", "keywords": ASR_KEYTERMS if profile != "baseline" else []},
             "turn": {"turn_timeout": 7, "silence_end_call_timeout": 20, "turn_eagerness": "eager" if profile == "fast" else "normal",
                      "spelling_patience": "auto", "speculative_turn": profile == "fast",
-                     "interruption_ignore_terms": BACKCHANNELS if profile != "baseline" and not phone else [], "merge_with_default_ignore_terms": False},
+                     "interruption_ignore_terms": BACKCHANNELS if profile != "baseline" and (campaign or not phone) else [], "merge_with_default_ignore_terms": False},
             "conversation": {"max_duration_seconds": 900 if campaign else ATTENDED_CALL_MAX_SECONDS if phone else 180, "client_events": ["audio", "interruption", "user_transcript", "agent_response", "agent_response_correction", "agent_tool_response", "agent_response_metadata", "agent_response_complete"]}},
         "platform_settings": {
             "auth": {"enable_auth": True},

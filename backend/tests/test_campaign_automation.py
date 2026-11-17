@@ -146,9 +146,20 @@ def test_campaign_voicemail_has_one_privacy_safe_approved_message(monkeypatch):
 def test_campaign_profile_preserves_voice_turn_settings_and_has_truthful_opening():
     from brightwater.managed.agent import config
     engineering = config(phone=True)
-    campaign = config(phone=True, campaign=True)
-    for key in ['tts','asr','turn']:
+    campaign = config(base_url='https://example.test', secret_id='provider-secret', phone=True, campaign=True)
+    for key in ['tts','asr']:
         assert engineering['conversation_config'][key] == campaign['conversation_config'][key]
+    turn = campaign['conversation_config']['turn']
+    assert turn['interruption_ignore_terms'] == ['mm-hmm', 'mhm', 'uh-huh']
+    assert not turn['merge_with_default_ignore_terms'] and turn['turn_eagerness'] == 'normal'
+    assert not turn['speculative_turn']
+    prompt = campaign['conversation_config']['agent']['prompt']
+    tools = {t['name']: t for t in prompt['tools']}
+    assert tools['check_availability']['pre_tool_speech'] == 'force'
+    assert 'Earlier offers cannot rule out a newly requested date.' in prompt['prompt']
+    for name in ['confirm_identity', 'prepare_booking', 'confirm_booking', 'cancel_arrangement', 'finish_conversation']:
+        assert tools[name]['pre_tool_speech'] == 'off'
+        assert tools[name]['interruption_mode'] == 'allow'
     assert campaign['conversation_config']['conversation']['max_duration_seconds'] == 900
     assert engineering['conversation_config']['conversation']['max_duration_seconds'] == 7200
     opening = campaign['conversation_config']['agent']['first_message']

@@ -80,7 +80,7 @@ with httpx.Client(base_url="https://api.elevenlabs.io", headers={"xi-api-key": k
     assert len(actual["platform_settings"]["evaluation"]["criteria"]) == 6, "Evaluation criteria were not retained"
     if args.profile != "baseline":
         assert actual["conversation_config"]["asr"]["keywords"], "Domain keyterms were not retained"
-        assert actual["conversation_config"]["turn"]["interruption_ignore_terms"] == ([] if args.phone else ["mm-hmm", "mhm", "uh-huh"])
+        assert actual["conversation_config"]["turn"]["interruption_ignore_terms"] == ([] if args.phone and not args.campaign else ["mm-hmm", "mhm", "uh-huh"])
         if resources.get("dictionary"):
             assert actual["conversation_config"]["tts"]["pronunciation_dictionary_locators"], "Dictionary missing"
     print(json.dumps({"agent_id": state["agent_id"], "signed_access": True, "phone_attached": False,
