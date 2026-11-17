@@ -136,10 +136,10 @@ class SpeechClock:
             if not cutoff <= (end if end is not None else start) <= received_at:
                 continue
             end = end if end is not None else received_at
-            voiced = sum(duration for at, duration, level in self.levels
-                         if start < at <= end and level >= floor)
-            if voiced >= .04:
-                recent.append((start, end))
+            voiced = [(at, duration) for at, duration, level in self.levels
+                      if start < at <= end and level >= floor]
+            if voiced and voiced[-1][0] >= cutoff and sum(duration for _, duration in voiced) >= .04:
+                recent.append((start, voiced[-1][0]))
         self.starts.clear()
         if self.turn_last_audio is not None and self.turn_last_audio < cutoff:
             self.turn_start = self.turn_last_audio = None
